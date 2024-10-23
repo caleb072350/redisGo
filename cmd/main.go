@@ -2,6 +2,7 @@ package main
 
 import (
 	"redisGo/lib/logger"
+	"redisGo/redis/tcp"
 	"redisGo/server"
 	"time"
 )
@@ -20,5 +21,7 @@ func main() {
 		MaxConnect: 16,
 		Timeout:    10 * time.Second,
 	}
-	server.ListenAndServe(cfg, &server.EchoServer{})
+	// server.ListenAndServe(cfg, &server.EchoServer{})
+	handler := tcp.MakeRedisHandler()
+	server.ListenAndServe(cfg, handler)
 }
