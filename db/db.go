@@ -2,43 +2,28 @@ package db
 
 import (
 	"fmt"
+	"redisGo/datastruct/dict"
+	"redisGo/datastruct/lock"
 	"redisGo/interface/redis"
-	"redisGo/lib/datastruct/dict"
 	"redisGo/lib/logger"
 	"redisGo/redis/reply"
 	"runtime/debug"
 	"strings"
 )
 
-const (
-	StringCode = iota // Data is []byte
-	ListCode          // *list.LinkedList
-	SetCode
-	DictCode // *dict.Dict
-	SortedSetCode
-)
-
 type DataEntity struct {
-	Code uint8
-	TTL  int64 // ttl in seconds, 0 for unlimited ttl
 	Data interface{}
 }
 
 type CmdFunc func(db *DB, args [][]byte) redis.Reply
 
 type DB struct {
-	Data *dict.Dict
+	Data   *dict.ConcurrentDict
+	TTLMap *dict.SimpleDict
+	Locker *lock.LockMap
 }
 
-var cmdMap = MakeCmdMap()
-
-func MakeCmdMap() map[string]CmdFunc {
-	cmdMap := make(map[string]CmdFunc)
-	cmdMap["ping"] = Ping
-	cmdMap["get"] = Get
-	cmdMap["set"] = Set
-	return cmdMap
-}
+var router = MakeRouter()
 
 func (db *DB) Exec(args [][]byte) (result redis.Reply) {
 	defer func() {
@@ -49,7 +34,7 @@ func (db *DB) Exec(args [][]byte) (result redis.Reply) {
 	}()
 
 	cmd := strings.ToLower(string(args[0]))
-	CmdFunc, ok := cmdMap[cmd]
+	CmdFunc, ok := router[cmd]
 	if !ok {
 		return reply.MakeErrReply("ERR unknown command `" + cmd + "`")
 	}
@@ -61,8 +46,58 @@ func (db *DB) Exec(args [][]byte) (result redis.Reply) {
 	return
 }
 
+func (db *DB) Get(key string) (*DataEntity, bool) {
+	raw, exists := db.Data.Get(key)
+	if !exists {
+		return nil, false
+	}
+	entity, _ := raw.(*DataEntity)
+	return entity, true
+}
+
+func (db *DB) Remove(key string) {
+	db.Data.Remove(key)
+	db.TTLMap.Remove(key)
+}
+
+/* ---- Lock Function ---------------*/
+
+func (db *DB) Lock(key string) {
+	db.Locker.Lock(key)
+}
+
+func (db *DB) RLock(key string) {
+	db.Locker.RLock(key)
+}
+
+func (db *DB) Unlock(key string) {
+	db.Locker.Unlock(key)
+}
+
+func (db *DB) RUnlock(key string) {
+	db.Locker.RUnlock(key)
+}
+
+func (db *DB) Locks(keys ...string) {
+	db.Locker.Locks(keys...)
+}
+
+func (db *DB) RLocks(keys ...string) {
+	db.Locker.RLocks(keys...)
+}
+
+func (db *DB) Unlocks(keys ...string) {
+	db.Locker.Unlocks(keys...)
+}
+
+func (db *DB) RUnlocks(keys ...string) {
+	db.Locker.RUnlocks(keys...)
+}
+
 func MakeDB() *DB {
 	return &DB{
-		Data: dict.Make(128),
+		Data:   dict.MakeConcurrent(128),
+		TTLMap: dict.MakeSimple(),
+		Locker: lock.Make(1024),
 	}
 }
