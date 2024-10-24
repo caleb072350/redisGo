@@ -15,22 +15,32 @@ func main() {
 	}
 	defer conn.Close()
 
-	// 发送命令
-	fmt.Fprintf(conn, "*1\r\n$4\r\nPING\r\n")
+	testCommand(conn, "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n") // 设置 key-value
 
-	// 读取并打印响应
-	reader := bufio.NewReader(conn)
-	buf := make([]byte, 1024)
-	for {
-		// line, err := reader.ReadString('\n')
-		content, err := reader.Read(buf)
-		if err != nil || content == 0 {
-			fmt.Println("read over")
-			break
-		}
-		line := string(buf)
-		fmt.Println(line)
-	}
+	// 测试 GET 命令
+	testCommand(conn, "*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n") // 获取 key 的值
 
 	time.Sleep(time.Second)
+}
+
+func testCommand(conn net.Conn, command string) {
+	fmt.Printf("发送命令:\n%s", command)
+
+	// 发送命令
+	fmt.Fprint(conn, command)
+	reader := bufio.NewReader(conn)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Println("读取响应失败:", err)
+		return
+	}
+	fmt.Println("响应:", response)
+	if response[0] == '$' { // bulk response
+		response, err = reader.ReadString('\n')
+		if err != nil {
+			fmt.Println("读取响应失败:", err)
+			return
+		}
+		fmt.Println("响应:", response)
+	}
 }

@@ -3,50 +3,66 @@ package db
 import (
 	"fmt"
 	"redisGo/interface/redis"
+	"redisGo/lib/datastruct/dict"
 	"redisGo/lib/logger"
 	"redisGo/redis/reply"
 	"runtime/debug"
 	"strings"
 )
 
-type CmdFunc func(args [][]byte) redis.Reply
+const (
+	StringCode = iota // Data is []byte
+	ListCode          // *list.LinkedList
+	SetCode
+	DictCode // *dict.Dict
+	SortedSetCode
+)
 
-type DB struct {
-	cmdMap map[string]CmdFunc
+type DataEntity struct {
+	Code uint8
+	TTL  int64 // ttl in seconds, 0 for unlimited ttl
+	Data interface{}
 }
 
-type UnknownErrReply struct{}
+type CmdFunc func(db *DB, args [][]byte) redis.Reply
 
-func (r *UnknownErrReply) ToBytes() []byte {
-	return []byte("-ERR unknown command\r\n")
+type DB struct {
+	Data *dict.Dict
+}
+
+var cmdMap = MakeCmdMap()
+
+func MakeCmdMap() map[string]CmdFunc {
+	cmdMap := make(map[string]CmdFunc)
+	cmdMap["ping"] = Ping
+	cmdMap["get"] = Get
+	cmdMap["set"] = Set
+	return cmdMap
 }
 
 func (db *DB) Exec(args [][]byte) (result redis.Reply) {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.Warn(fmt.Sprintf("error occurs: %v\n%s", err, string(debug.Stack())))
-			result = &UnknownErrReply{}
+			result = &reply.UnknownErrReply{}
 		}
 	}()
 
 	cmd := strings.ToLower(string(args[0]))
-	CmdFunc, ok := db.cmdMap[cmd]
+	CmdFunc, ok := cmdMap[cmd]
 	if !ok {
 		return reply.MakeErrReply("ERR unknown command `" + cmd + "`")
 	}
 	if len(args) > 1 {
-		result = CmdFunc(args[1:])
+		result = CmdFunc(db, args[1:])
 	} else {
-		result = CmdFunc([][]byte{})
+		result = CmdFunc(db, [][]byte{})
 	}
 	return
 }
 
 func MakeDB() *DB {
-	cmdMap := make(map[string]CmdFunc)
-	cmdMap["ping"] = Ping
-
 	return &DB{
-		cmdMap: cmdMap,
+		Data: dict.Make(128),
 	}
 }
