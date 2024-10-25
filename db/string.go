@@ -5,6 +5,7 @@ import (
 	"redisGo/redis/reply"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/shopspring/decimal"
 )
@@ -18,7 +19,7 @@ const (
 func (db *DB) getAsString(key string) ([]byte, reply.ErrorReply) {
 	entity, ok := db.Get(key)
 	if !ok {
-		return nil, nil
+		return nil, reply.MakeErrorReply("ERR key not found")
 	}
 	bytes, ok := entity.Data.([]byte)
 	if !ok {
@@ -114,28 +115,13 @@ func Set(db *DB, args [][]byte) redis.Reply {
 	case updatePolicy:
 		db.Data.PutIfExists(key, entity)
 	}
+	if ttl != unlimitedTTL {
+		expireTime := time.Now().Add(time.Duration(ttl) * time.Millisecond)
+		db.Expire(key, expireTime)
+	} else {
+		db.Persist(key)
+	}
 	return &reply.OkReply{}
-}
-
-func Del(db *DB, args [][]byte) redis.Reply {
-	if len(args) == 0 {
-		return reply.MakeErrReply("ERR wrong number of arguments for 'del' command")
-	}
-	keys := make([]string, len(args))
-	for i, v := range args {
-		keys[i] = string(v)
-	}
-	db.Locks(keys...)
-	defer db.Unlocks(keys...)
-	deleted := 0
-	for _, key := range keys {
-		_, exists := db.Get(key)
-		if exists {
-			db.Remove(key)
-			deleted++
-		}
-	}
-	return reply.MakeIntReply(int64(deleted))
 }
 
 func MSet(db *DB, args [][]byte) redis.Reply {

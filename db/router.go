@@ -16,6 +16,19 @@ func MakeRouter() map[string]CmdFunc {
 	cmdMap["decrby"] = DecrBy
 	cmdMap["decrbyfloat"] = DecrByFloat
 
+	cmdMap["isexpired"] = IsExpired
+	cmdMap["expire"] = Expire
+	cmdMap["expireat"] = ExpireAt
+	cmdMap["pexpire"] = PExpire
+	cmdMap["pexpireat"] = PExpireAt
+	cmdMap["ttl"] = TTL
+	cmdMap["pttl"] = PTTL
+	cmdMap["persist"] = Persist
+	cmdMap["exists"] = Exists
+	cmdMap["type"] = Type
+	cmdMap["rename"] = Rename
+	cmdMap["renamenx"] = RenameNX
+
 	cmdMap["rpush"] = RPush
 	cmdMap["lindex"] = LIndex
 	cmdMap["llen"] = LLen
@@ -26,5 +39,19 @@ func MakeRouter() map[string]CmdFunc {
 	cmdMap["lset"] = LSet
 	cmdMap["rpop"] = RPop
 	cmdMap["rpoplpush"] = RPopLPush
+
+	cmdMap["hset"] = HSet
+	cmdMap["hsetnx"] = HSetNX
+	cmdMap["hget"] = HGet
+	cmdMap["hexists"] = HExists
+	cmdMap["hdel"] = HDel
+	cmdMap["hlen"] = HLen
+	cmdMap["hmset"] = HMSet
+	cmdMap["hmget"] = HMGet
+	cmdMap["hkeys"] = HKeys
+	cmdMap["hvals"] = HVals
+	cmdMap["hgetall"] = HGetAll
+	cmdMap["hincrby"] = HIncrBy
+	cmdMap["hincrbyfloat"] = HIncrByFloat
 	return cmdMap
 }

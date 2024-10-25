@@ -100,3 +100,19 @@ func MakeIntReply(code int64) *IntReply {
 func (r *IntReply) ToBytes() []byte {
 	return []byte(":" + strconv.FormatInt(r.Code, 10) + CRLF)
 }
+
+/* ---- Status Reply ---- */
+
+type StatusReply struct {
+	Status string
+}
+
+func MakeStatusReply(status string) *StatusReply {
+	return &StatusReply{
+		Status: status,
+	}
+}
+
+func (r *StatusReply) ToBytes() []byte {
+	return []byte("+" + r.Status + "\r\n")
+}

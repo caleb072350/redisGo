@@ -51,7 +51,8 @@ func Setup(settings *Settings) {
 	}
 
 	mw := io.MultiWriter(os.Stdout, logFile)
-	logger = log.New(mw, DefaultPrefix, log.LstdFlags)
+	// logger = log.New(mw, DefaultPrefix, log.LstdFlags)
+	logger = log.New(mw, DefaultPrefix, log.Lmicroseconds|log.LstdFlags)
 }
 
 func setPrefix(level Level) {

@@ -9,6 +9,7 @@ import (
 	"redisGo/redis/reply"
 	"runtime/debug"
 	"strings"
+	"time"
 )
 
 type DataEntity struct {
@@ -18,9 +19,10 @@ type DataEntity struct {
 type CmdFunc func(db *DB, args [][]byte) redis.Reply
 
 type DB struct {
-	Data   *dict.ConcurrentDict
-	TTLMap *dict.SimpleDict
-	Locker *lock.LockMap
+	Data     *dict.ConcurrentDict
+	TTLMap   *dict.SimpleDict
+	Locker   *lock.LockMap
+	interval time.Duration
 }
 
 var router = MakeRouter()
@@ -60,6 +62,46 @@ func (db *DB) Remove(key string) {
 	db.TTLMap.Remove(key)
 }
 
+func (db *DB) Expire(key string, expireTime time.Time) {
+	db.TTLMap.Put(key, expireTime)
+}
+
+func (db *DB) Persist(key string) {
+	db.TTLMap.Remove(key)
+}
+
+func (db *DB) IsExpired(key string) bool {
+	rawExpireTime, ok := db.TTLMap.Get(key)
+	if !ok {
+		return true
+	}
+	expireTime, _ := rawExpireTime.(time.Time)
+	expired := expireTime.Before(time.Now())
+	return expired
+}
+
+func (db *DB) CleanExpired() {
+	now := time.Now()
+	db.TTLMap.ForEach(func(key string, value interface{}) bool {
+		expireTime, _ := value.(time.Time)
+		if expireTime.Before(now) {
+			db.Remove(key)
+			logger.Info(fmt.Sprintf("clean expired key: %s", key))
+		}
+		return true
+	})
+}
+
+func (db *DB) TimerTask() {
+	ticker := time.NewTicker(db.interval)
+	go func() {
+		for range ticker.C {
+			db.CleanExpired()
+			logger.Info("TimerTask is running...")
+		}
+	}()
+}
+
 /* ---- Lock Function ---------------*/
 
 func (db *DB) Lock(key string) {
@@ -95,9 +137,12 @@ func (db *DB) RUnlocks(keys ...string) {
 }
 
 func MakeDB() *DB {
-	return &DB{
-		Data:   dict.MakeConcurrent(128),
-		TTLMap: dict.MakeSimple(),
-		Locker: lock.Make(1024),
+	db := &DB{
+		Data:     dict.MakeConcurrent(128),
+		TTLMap:   dict.MakeSimple(),
+		Locker:   lock.Make(1024),
+		interval: 5 * time.Second,
 	}
+	db.TimerTask()
+	return db
 }
