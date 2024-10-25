@@ -10,4 +10,7 @@ type Dict interface {
 	PutIfAbsent(key string, val interface{}) int
 	Remove(key string) int
 	ForEach(consumer Consumer)
+	Keys() []string
+	RandomKeys(n int) []string
+	RandomDistinctKeys(n int) []string
 }

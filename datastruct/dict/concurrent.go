@@ -1,6 +1,7 @@
 package dict
 
 import (
+	"math/rand"
 	"redisGo/interface/dict"
 	"sync"
 	"sync/atomic"
@@ -143,4 +144,84 @@ func (d *ConcurrentDict) ForEach(consumer dict.Consumer) {
 		}
 		shard.mutex.RUnlock()
 	}
+}
+
+func (d *ConcurrentDict) addCount() int32 {
+	return atomic.AddInt32(&d.count, 1)
+}
+
+func (d *ConcurrentDict) Keys() []string {
+	keys := make([]string, d.Len())
+	i := 0
+	d.ForEach(func(key string, val interface{}) bool {
+		if i < len(keys) {
+			keys[i] = key
+			i++
+		} else {
+			keys = append(keys, key)
+		}
+		return true
+	})
+	return keys
+}
+
+func (shard *Shard) RandomKey() string {
+	if shard == nil {
+		panic("shard is nil")
+	}
+	shard.mutex.RLock()
+	defer shard.mutex.RUnlock()
+
+	for key := range shard.m { // 这里的trick在于，在go中遍历map的key是伪随机的
+		return key
+	}
+	return ""
+}
+
+// 有可能同一个key被选中多次
+func (d *ConcurrentDict) RandomKeys(n int) []string {
+	size := d.Len()
+	if n >= size {
+		return d.Keys()
+	}
+	shardCount := len(d.table)
+	result := make([]string, n)
+	for i := 0; i < n; {
+		shard := d.table[rand.Intn(shardCount)] // 这里随机选择一个map
+		if shard == nil {
+			continue
+		}
+		key := shard.RandomKey()
+		if key != "" {
+			result[i] = key
+			i++
+		}
+	}
+	return result
+}
+
+func (d *ConcurrentDict) RandomDistinctKeys(n int) []string {
+	size := d.Len()
+	if n >= size {
+		return d.Keys()
+	}
+	shardCount := len(d.table)
+	result := make(map[string]bool)
+	for len(result) < n {
+		shard := d.table[rand.Intn(shardCount)] // 这里随机选择一个map
+		if shard == nil {
+			continue
+		}
+		key := shard.RandomKey()
+		if key != "" {
+			result[key] = true
+		}
+	}
+	arr := make([]string, n)
+	i := 0
+	for key := range result {
+		arr[i] = key
+		i++
+	}
+	return arr
 }

@@ -66,3 +66,41 @@ func (d *SimpleDict) ForEach(consumer dict.Consumer) {
 		}
 	}
 }
+
+func (d *SimpleDict) Keys() []string {
+	result := make([]string, len(d.m))
+	i := 0
+	for k := range d.m {
+		result[i] = k
+		i++
+	}
+	return result
+}
+
+func (d *SimpleDict) RandomKeys(n int) []string {
+	result := make([]string, n)
+	for i := 0; i < n; i++ {
+		for key := range d.m {
+			result[i] = key
+			break
+		}
+	}
+	return result
+}
+
+func (d *SimpleDict) RandomDistinctKeys(n int) []string {
+	size := n
+	if size > len(d.m) {
+		size = len(d.m)
+	}
+	result := make([]string, size)
+	i := 0
+	for key := range d.m {
+		result[i] = key
+		i++
+		if i == size {
+			break
+		}
+	}
+	return result
+}

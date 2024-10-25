@@ -53,5 +53,19 @@ func MakeRouter() map[string]CmdFunc {
 	cmdMap["hgetall"] = HGetAll
 	cmdMap["hincrby"] = HIncrBy
 	cmdMap["hincrbyfloat"] = HIncrByFloat
+
+	cmdMap["sadd"] = SAdd
+	cmdMap["sismember"] = SIsMember
+	cmdMap["srem"] = SRem
+	cmdMap["scard"] = SCard
+	cmdMap["smembers"] = SMembers
+	cmdMap["sinter"] = SInter
+	cmdMap["sinterstore"] = SInterStore
+	cmdMap["sunion"] = SUnion
+	cmdMap["sunionstore"] = SUnionStore
+	cmdMap["sdiff"] = SDiff
+	cmdMap["sdiffstore"] = SDiffStore
+	cmdMap["srandmember"] = SRandMember
+
 	return cmdMap
 }
