@@ -27,6 +27,9 @@ func Del(db *DB, args [][]byte) redis.Reply {
 			deleted++
 		}
 	}
+	if deleted > 0 {
+		db.addAof(makeAofCmd("del", args))
+	}
 	return reply.MakeIntReply(int64(deleted))
 }
 
@@ -47,6 +50,7 @@ func FlushDB(db *DB, args [][]byte) redis.Reply {
 		return reply.MakeErrReply("ERR wrong number of arguments for 'flushdb' command")
 	}
 	db.Flush()
+	db.addAof(makeAofCmd("flushdb", args))
 	return &reply.OkReply{}
 }
 
@@ -55,6 +59,7 @@ func FlushAll(db *DB, args [][]byte) redis.Reply {
 		return reply.MakeErrReply("ERR wrong number of arguments for 'flushall' command")
 	}
 	db.Flush()
+	db.addAof(makeAofCmd("flushall", args))
 	return &reply.OkReply{}
 }
 
@@ -222,6 +227,7 @@ func Persist(db *DB, args [][]byte) redis.Reply {
 		return reply.MakeIntReply(0)
 	}
 	db.TTLMap.Remove(key)
+	db.addAof(makeAofCmd("persist", args))
 	return reply.MakeIntReply(1)
 }
 
@@ -244,6 +250,7 @@ func Rename(db *DB, args [][]byte) redis.Reply {
 	if ok {
 		db.Expire(newKey, rawTTL.(time.Time))
 	}
+	db.addAof(makeAofCmd("rename", args))
 	return &reply.OkReply{}
 }
 
@@ -270,5 +277,6 @@ func RenameNX(db *DB, args [][]byte) redis.Reply {
 	if ok {
 		db.Expire(newKey, rawTTL.(time.Time))
 	}
+	db.addAof(makeAofCmd("renamenx", args))
 	return reply.MakeIntReply(1)
 }

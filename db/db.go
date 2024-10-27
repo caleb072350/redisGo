@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"os"
 	Dict "redisGo/datastruct/dict"
 	"redisGo/datastruct/lock"
 	"redisGo/interface/dict"
@@ -23,6 +24,8 @@ const (
 	dataDictSize = 128
 	ttlDictSize  = 128
 	lockerSize   = 128
+	aofQueueSize = 1 << 10
+	aofFilename  = "aof.aof"
 )
 
 type CmdFunc func(db *DB, args [][]byte) redis.Reply
@@ -36,6 +39,11 @@ type DB struct {
 	hub *pubsub.Hub
 
 	stopWorld sync.WaitGroup // DB 的全局锁，在某些场景下单独对某个key加锁是不够的
+
+	// main goroutine send command to aof goroutine through aofChan
+	aofChan     chan *reply.MultiBulkReply
+	aofFile     *os.File
+	aofFilename string
 }
 
 /*
@@ -63,8 +71,30 @@ func MakeDB() *DB {
 		interval: 5 * time.Second,
 		hub:      pubsub.MakeHub(),
 	}
+
+	db.aofFilename = aofFilename
+	db.loadAof()
+	aofFile, err := os.OpenFile(db.aofFilename, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		logger.Warn(err)
+	} else {
+		db.aofFile = aofFile
+		db.aofChan = make(chan *reply.MultiBulkReply, aofQueueSize)
+	}
+	go func() {
+		db.handleAof()
+	}()
 	db.TimerTask()
 	return db
+}
+
+func (db *DB) Close() {
+	if db.aofFile != nil {
+		err := db.aofFile.Close()
+		if err != nil {
+			logger.Warn(err)
+		}
+	}
 }
 
 func (db *DB) Exec(c redis.Client, args [][]byte) (result redis.Reply) {

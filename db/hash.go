@@ -50,6 +50,7 @@ func HSet(db *DB, args [][]byte) redis.Reply {
 		return errReply
 	}
 	res := dict.Put(field, value)
+	db.addAof(makeAofCmd("hset", args))
 	return reply.MakeIntReply(int64(res))
 }
 
@@ -67,6 +68,9 @@ func HSetNX(db *DB, args [][]byte) redis.Reply {
 		return errReply
 	}
 	res := dict.PutIfAbsent(field, value)
+	if res > 0 {
+		db.addAof(makeAofCmd("hsetnx", args))
+	}
 	return reply.MakeIntReply(int64(res))
 }
 
@@ -146,6 +150,9 @@ func HDel(db *DB, args [][]byte) redis.Reply {
 	if dict.Len() == 0 {
 		db.Remove(key)
 	}
+	if count > 0 {
+		db.addAof(makeAofCmd("hdel", args))
+	}
 	return reply.MakeIntReply(int64(count))
 }
 
@@ -188,6 +195,7 @@ func HMSet(db *DB, args [][]byte) redis.Reply {
 		value := values[i]
 		dict.Put(field, value)
 	}
+	db.addAof(makeAofCmd("hmset", args))
 	return &reply.OkReply{}
 }
 
@@ -322,9 +330,11 @@ func HIncrBy(db *DB, args [][]byte) redis.Reply {
 		val += delta
 		bytes := []byte(strconv.FormatInt(val, 10))
 		dict.Put(field, bytes)
+		db.addAof(makeAofCmd("hincrby", args))
 		return reply.MakeBulkReply(bytes)
 	} else {
 		dict.Put(field, args[2])
+		db.addAof(makeAofCmd("hset", args))
 		return reply.MakeBulkReply(args[2])
 	}
 }
@@ -353,9 +363,11 @@ func HIncrByFloat(db *DB, args [][]byte) redis.Reply {
 		}
 		result := val.Add(delta)
 		dict.Put(field, []byte(result.String()))
+		db.addAof(makeAofCmd("hincrbyfloat", args))
 		return reply.MakeBulkReply([]byte(result.String()))
 	} else {
 		dict.Put(field, args[2])
+		db.addAof(makeAofCmd("hset", args))
 		return reply.MakeBulkReply(args[2])
 	}
 }

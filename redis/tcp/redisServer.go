@@ -34,6 +34,12 @@ func MakeRedisHandler() *RedisHandler {
 	}
 }
 
+func (s *RedisHandler) closeClient(client *Client) {
+	_ = client.Close()
+	s.db.AfterClientClose(client)
+	s.activeConn.Delete(client)
+}
+
 func (s *RedisHandler) Handle(ctx context.Context, conn net.Conn) {
 	if s.closing.Get() {
 		conn.Close()
@@ -50,23 +56,36 @@ func (s *RedisHandler) Handle(ctx context.Context, conn net.Conn) {
 	for {
 		if fixedLen == 0 {
 			msg, err = reader.ReadBytes('\n')
+			if err != nil {
+				if err == io.EOF || err == io.ErrUnexpectedEOF {
+					logger.Info("connection close")
+				} else {
+					logger.Warn(err)
+				}
+				s.closeClient(client)
+				return
+			}
+			if len(msg) == 0 || msg[len(msg)-2] != '\r' {
+				errReply := &reply.ProtocolErrReply{Msg: "invalid multibulk length"}
+				_, _ = client.conn.Write(errReply.ToBytes())
+			}
 		} else {
 			msg = make([]byte, fixedLen+2)
 			_, err = io.ReadFull(reader, msg)
-			fixedLen = 0
-		}
-		if err != nil {
-			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				logger.Info("connection close")
-			} else {
-				logger.Warn(err)
+			if err != nil {
+				if err == io.EOF || err == io.ErrUnexpectedEOF {
+					logger.Info("connection close")
+				} else {
+					logger.Warn(err)
+				}
+				s.closeClient(client)
+				return
 			}
-			client.Close()
-			s.activeConn.Delete(client)
-			return
-		}
-		if len(msg) == 0 {
-			continue
+			if len(msg) == 0 || msg[len(msg)-2] != '\r' || msg[len(msg)-1] != '\n' {
+				errReply := &reply.ProtocolErrReply{Msg: "invalid multibulk length"}
+				_, _ = client.conn.Write(errReply.ToBytes())
+			}
+			fixedLen = 0
 		}
 
 		if !client.uploading.Get() {
@@ -84,7 +103,6 @@ func (s *RedisHandler) Handle(ctx context.Context, conn net.Conn) {
 				client.receivedCount = 0
 				client.args = make([][]byte, expectedLine)
 			} else {
-				// TODO: text protocol
 				// remove \r or \n or \r\n in the end of line
 				str := strings.TrimSuffix(string(msg), "\n")
 				str = strings.TrimSuffix(str, "\r")
@@ -145,8 +163,9 @@ func (s *RedisHandler) Close() error {
 	s.closing.Set(true)
 	s.activeConn.Range(func(key, _ any) bool {
 		client := key.(*Client)
-		client.Close()
+		_ = client.Close()
 		return true
 	})
+	s.db.Close()
 	return nil
 }

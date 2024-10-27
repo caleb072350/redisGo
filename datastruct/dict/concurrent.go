@@ -153,7 +153,7 @@ func (d *ConcurrentDict) addCount() int32 {
 func (d *ConcurrentDict) Keys() []string {
 	keys := make([]string, d.Len())
 	i := 0
-	d.ForEach(func(key string, val interface{}) bool {
+	d.ForEach(func(key string, _ interface{}) bool {
 		if i < len(keys) {
 			keys[i] = key
 			i++
