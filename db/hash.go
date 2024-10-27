@@ -239,7 +239,7 @@ func HKeys(db *DB, args [][]byte) redis.Reply {
 	}
 	fields := make([][]byte, dict.Len())
 	i := 0
-	dict.ForEach(func(key string, value interface{}) bool {
+	dict.ForEach(func(key string, _ interface{}) bool {
 		fields[i] = []byte(key)
 		i++
 		return true
@@ -263,7 +263,7 @@ func HVals(db *DB, args [][]byte) redis.Reply {
 	}
 	values := make([][]byte, dict.Len())
 	i := 0
-	dict.ForEach(func(key string, value interface{}) bool {
+	dict.ForEach(func(_ string, value interface{}) bool {
 		values[i] = value.([]byte)
 		i++
 		return true

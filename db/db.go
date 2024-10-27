@@ -6,6 +6,7 @@ import (
 	"redisGo/datastruct/lock"
 	"redisGo/interface/redis"
 	"redisGo/lib/logger"
+	"redisGo/pubsub"
 	"redisGo/redis/reply"
 	"runtime/debug"
 	"strings"
@@ -23,11 +24,25 @@ type DB struct {
 	TTLMap   *dict.SimpleDict
 	Locker   *lock.LockMap
 	interval time.Duration
+
+	hub *pubsub.Hub
 }
 
 var router = MakeRouter()
 
-func (db *DB) Exec(args [][]byte) (result redis.Reply) {
+func MakeDB() *DB {
+	db := &DB{
+		Data:     dict.MakeConcurrent(128),
+		TTLMap:   dict.MakeSimple(),
+		Locker:   lock.Make(1024),
+		interval: 5 * time.Second,
+		hub:      pubsub.MakeHub(),
+	}
+	db.TimerTask()
+	return db
+}
+
+func (db *DB) Exec(c redis.Client, args [][]byte) (result redis.Reply) {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.Warn(fmt.Sprintf("error occurs: %v\n%s", err, string(debug.Stack())))
@@ -36,6 +51,17 @@ func (db *DB) Exec(args [][]byte) (result redis.Reply) {
 	}()
 
 	cmd := strings.ToLower(string(args[0]))
+
+	if cmd == "subscribe" {
+		if len(args) < 2 {
+			return &reply.ArgNumErrReply{Cmd: "subscribe"}
+		}
+		return pubsub.Subscribe(db.hub, c, args[1:])
+	} else if cmd == "unsubscribe" {
+		return pubsub.UnSubscribe(db.hub, c, args[1:])
+	} else if cmd == "publish" {
+		return pubsub.Publish(db.hub, args[1:])
+	}
 	CmdFunc, ok := router[cmd]
 	if !ok {
 		return reply.MakeErrReply("ERR unknown command `" + cmd + "`")
@@ -136,13 +162,6 @@ func (db *DB) RUnlocks(keys ...string) {
 	db.Locker.RUnlocks(keys...)
 }
 
-func MakeDB() *DB {
-	db := &DB{
-		Data:     dict.MakeConcurrent(128),
-		TTLMap:   dict.MakeSimple(),
-		Locker:   lock.Make(1024),
-		interval: 5 * time.Second,
-	}
-	db.TimerTask()
-	return db
+func (db *DB) AfterClientClose(c redis.Client) {
+	pubsub.UnsubscribeAll(db.hub, c)
 }

@@ -57,7 +57,7 @@ func (s *EchoServer) Handle(ctx context.Context, conn net.Conn) {
 func (s *EchoServer) Close() error {
 	logger.Info("handler shuting down...")
 	s.closing.Set(true)
-	s.activeConn.Range(func(key interface{}, value interface{}) bool {
+	s.activeConn.Range(func(key interface{}, _ interface{}) bool {
 		client := key.(*Client)
 		_ = client.Conn.Close()
 		return true

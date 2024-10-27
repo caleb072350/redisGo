@@ -3,12 +3,14 @@ package tcp
 import (
 	"bufio"
 	"context"
+	"io"
 	"net"
 	"redisGo/db"
 	"redisGo/lib/logger"
 	"redisGo/lib/sync/atomic"
-	"redisGo/redis/parser"
+	"redisGo/redis/reply"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -42,10 +44,23 @@ func (s *RedisHandler) Handle(ctx context.Context, conn net.Conn) {
 	s.activeConn.Store(client, 1)
 
 	reader := bufio.NewReader(conn)
+	var fixedLen int64 = 0
+	var err error
+	var msg []byte
 	for {
-		msg, err := reader.ReadBytes('\n')
+		if fixedLen == 0 {
+			msg, err = reader.ReadBytes('\n')
+		} else {
+			msg = make([]byte, fixedLen+2)
+			_, err = io.ReadFull(reader, msg)
+			fixedLen = 0
+		}
 		if err != nil {
-			logger.Warn(err)
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				logger.Info("connection close")
+			} else {
+				logger.Warn(err)
+			}
 			client.Close()
 			s.activeConn.Delete(client)
 			return
@@ -54,52 +69,70 @@ func (s *RedisHandler) Handle(ctx context.Context, conn net.Conn) {
 			continue
 		}
 
-		if !client.sending.Get() {
+		if !client.uploading.Get() {
 			if msg[0] == '*' {
+				// bulk multi msg
 				expectedLine, err := strconv.ParseUint(string(msg[1:len(msg)-2]), 10, 32)
 				if err != nil {
 					client.conn.Write(UnknownErrReplyBytes)
 					continue
 				}
-				expectedLine *= 2
+
 				client.waitingReply.Add(1)
-				client.sending.Set(true)
-				client.expectedLineCount = uint32(expectedLine)
-				client.sentLineCount = 0
-				client.sentLines = make([][]byte, expectedLine)
+				client.uploading.Set(true)
+				client.expectedArgsCount = uint32(expectedLine)
+				client.receivedCount = 0
+				client.args = make([][]byte, expectedLine)
 			} else {
 				// TODO: text protocol
+				// remove \r or \n or \r\n in the end of line
+				str := strings.TrimSuffix(string(msg), "\n")
+				str = strings.TrimSuffix(str, "\r")
+				strs := strings.Split(str, " ")
+				args := make([][]byte, len(strs))
+				for i, s := range strs {
+					args[i] = []byte(s)
+				}
+				result := s.db.Exec(client, args)
+				if result != nil {
+					_ = client.Write(result.ToBytes())
+				} else {
+					_ = client.Write(UnknownErrReplyBytes)
+				}
 			}
 		} else {
 			// receiving following part of a request
-			client.sentLines[client.sentLineCount] = msg[0 : len(msg)-2]
-			client.sentLineCount++
-
-			if client.sentLineCount == client.expectedLineCount {
-				client.sending.Set(false)
-
-				if len(client.sentLines)%2 != 0 {
-					client.conn.Write(UnknownErrReplyBytes)
-					client.expectedLineCount = 0
-					client.sentLineCount = 0
-					client.sentLines = nil
-					client.waitingReply.Done()
-					continue
+			line := msg[0 : len(msg)-2]
+			if line[0] == '$' {
+				fixedLen, err = strconv.ParseInt(string(line[1:]), 10, 64)
+				if err != nil {
+					errReply := &reply.ProtocolErrReply{Msg: err.Error()}
+					_, _ = client.conn.Write(errReply.ToBytes())
 				}
+				if fixedLen <= 0 {
+					errReply := reply.ProtocolErrReply{Msg: "invalid multibulk length"}
+					_, _ = client.conn.Write(errReply.ToBytes())
+				}
+			} else {
+				client.args[client.receivedCount] = line
+				client.receivedCount++
+			}
+
+			if client.receivedCount == client.expectedArgsCount {
+				client.uploading.Set(false)
 
 				// send reply
-				args := parser.Parse(client.sentLines)
-				result := s.db.Exec(args) // 这里是执行redis命令的入口
+				result := s.db.Exec(client, client.args) // 这里是执行redis命令的入口
 				if result != nil {
-					conn.Write(result.ToBytes())
+					_, _ = conn.Write(result.ToBytes())
 				} else {
-					conn.Write(UnknownErrReplyBytes)
+					_, _ = conn.Write(UnknownErrReplyBytes)
 				}
 
 				// finish reply
-				client.expectedLineCount = 0
-				client.sentLineCount = 0
-				client.sentLines = nil
+				client.expectedArgsCount = 0
+				client.receivedCount = 0
+				client.args = nil
 				client.waitingReply.Done()
 			}
 		}
@@ -110,7 +143,7 @@ func (s *RedisHandler) Handle(ctx context.Context, conn net.Conn) {
 func (s *RedisHandler) Close() error {
 	logger.Info("redis handler shuting down...")
 	s.closing.Set(true)
-	s.activeConn.Range(func(key, value any) bool {
+	s.activeConn.Range(func(key, _ any) bool {
 		client := key.(*Client)
 		client.Close()
 		return true

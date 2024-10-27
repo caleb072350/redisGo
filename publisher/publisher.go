@@ -15,18 +15,11 @@ func main() {
 	}
 	defer conn.Close()
 
-	testCommand(conn, "*3\r\n$4\r\nSADD\r\n$3\r\nkey\r\n$5\r\nvalue\r\n")
-	// testCommand(conn, "*2\r\n$4\r\nEXISTS\r\n$3\r\nkey\r\n")
-	// testCommand(conn, "*2\r\n$3\r\nDEL\r\n$3\r\nkey\r\n")
-	// testCommand(conn, "*2\r\n$3\r\nEXISTS\r\n$3\r\nkey\r\n")
-	// testCommand(conn, "*2\r\n$4\r\nTYPE\r\n$3\r\nkey\r\n")
-	// testCommand(conn, "*4\r\n$5\r\nRPUSH\r\n$6\r\nmylist\r\n$8\r\nelement1\r\n$8\r\nelement2\r\n") // element1 -> element2
-	// testCommand(conn, "*2\r\n$5\r\nTYPE\r\n$6\r\nmylist\r\n")
-	// testCommand(conn, "*4\r\n$4\r\nHSET\r\n$7\r\nhashkey\r\n$5\r\nfield\r\n$5\r\nvalue\r\n")
-	// testCommand(conn, "*2\r\n$5\r\nTYPE\r\n$7\r\nhashkey\r\n")
-	// testCommand(conn, "*3\r\n$6\r\nRENAME\r\n$3\r\nkey\r\n$6\r\nnewkey\r\n")
-	// testCommand(conn, "*3\r\n$6\r\nRENAMENX\r\n$3\r\nnewkey\r\n$6\r\nnewkey2\r\n")
-	// testCommand(conn, "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n")
+	// testCommand(conn, "*3\r\n$4\r\nSADD\r\n$3\r\nkey\r\n$5\r\nvalue\r\n")
+	// 测试 订阅
+	// testCommand(conn, "*2\r\n$9\r\nSUBSCRIBE\r\n$11\r\ntestchannel\r\n")
+	// 测试 发布
+	testCommand(conn, "*3\r\n$7\r\nPUBLISH\r\n$11\r\ntestchannel\r\n$7\r\nmessage\r\n")
 
 }
 
