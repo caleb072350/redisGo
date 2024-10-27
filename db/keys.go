@@ -42,6 +42,22 @@ func Exists(db *DB, args [][]byte) redis.Reply {
 	return reply.MakeIntReply(1)
 }
 
+func FlushDB(db *DB, args [][]byte) redis.Reply {
+	if len(args) != 0 {
+		return reply.MakeErrReply("ERR wrong number of arguments for 'flushdb' command")
+	}
+	db.Flush()
+	return &reply.OkReply{}
+}
+
+func FlushAll(db *DB, args [][]byte) redis.Reply {
+	if len(args) != 0 {
+		return reply.MakeErrReply("ERR wrong number of arguments for 'flushall' command")
+	}
+	db.Flush()
+	return &reply.OkReply{}
+}
+
 func Type(db *DB, args [][]byte) redis.Reply {
 	if len(args) != 1 {
 		return reply.MakeErrReply("ERR wrong number of arguments for 'type' command")
@@ -224,7 +240,7 @@ func Rename(db *DB, args [][]byte) redis.Reply {
 	rawTTL, ok := db.TTLMap.Get(oldKey)
 	db.Persist(oldKey)
 	db.Persist(newKey)
-	db.Data.Put(newKey, entity)
+	db.Put(newKey, entity)
 	if ok {
 		db.Expire(newKey, rawTTL.(time.Time))
 	}
@@ -249,7 +265,7 @@ func RenameNX(db *DB, args [][]byte) redis.Reply {
 	}
 	db.Persist(oldKey)
 	db.Persist(newKey)
-	db.Data.Put(newKey, entity)
+	db.Put(newKey, entity)
 	rawTTL, ok := db.TTLMap.Get(oldKey)
 	if ok {
 		db.Expire(newKey, rawTTL.(time.Time))

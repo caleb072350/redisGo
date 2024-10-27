@@ -26,7 +26,7 @@ func (db *DB) getOrInitList(key string) (*List.LinkedList, bool, reply.ErrorRepl
 	}
 	if list == nil {
 		list = &List.LinkedList{}
-		db.Data.Put(key, &DataEntity{Data: list})
+		db.Put(key, &DataEntity{Data: list})
 	}
 	return list, true, nil
 }

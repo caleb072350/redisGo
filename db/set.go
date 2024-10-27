@@ -27,7 +27,7 @@ func (db *DB) getOrInitSet(key string) (set *HashSet.Set, inited bool, errReply 
 	inited = false
 	if set == nil {
 		set = HashSet.Make(0)
-		db.Data.Put(key, &DataEntity{Data: set})
+		db.Put(key, &DataEntity{Data: set})
 		inited = true
 	}
 	return set, inited, nil
@@ -216,7 +216,7 @@ func SInterStore(db *DB, args [][]byte) redis.Reply {
 	}
 
 	set := HashSet.MakeFromVals(result.ToSlice()...)
-	db.Data.Put(dest, &DataEntity{
+	db.Put(dest, &DataEntity{
 		Data: set,
 	})
 	return reply.MakeIntReply(int64(set.Len()))
@@ -292,7 +292,7 @@ func SUnionStore(db *DB, args [][]byte) redis.Reply {
 		return &reply.EmptyMultiBulkReply{}
 	}
 	set := HashSet.MakeFromVals(result.ToSlice()...)
-	db.Data.Put(dest, &DataEntity{
+	db.Put(dest, &DataEntity{
 		Data: set,
 	})
 	return reply.MakeIntReply(int64(set.Len()))
@@ -390,7 +390,7 @@ func SDiffStore(db *DB, args [][]byte) redis.Reply {
 		return &reply.EmptyMultiBulkReply{}
 	} else {
 		set := HashSet.MakeFromVals(result.ToSlice()...)
-		db.Data.Put(dest, &DataEntity{
+		db.Put(dest, &DataEntity{
 			Data: set,
 		})
 		return reply.MakeIntReply(int64(set.Len()))

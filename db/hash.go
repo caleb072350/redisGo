@@ -30,7 +30,7 @@ func (db *DB) getOrInitDict(key string) (dict dict.Dict, inited bool, errReply r
 	inited = false
 	if dict == nil {
 		dict = Dict.MakeSimple()
-		db.Data.Put(key, &DataEntity{Data: dict})
+		db.Put(key, &DataEntity{Data: dict})
 		inited = true
 	}
 	return dict, inited, nil

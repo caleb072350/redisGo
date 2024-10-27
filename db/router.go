@@ -67,5 +67,8 @@ func MakeRouter() map[string]CmdFunc {
 	cmdMap["sdiffstore"] = SDiffStore
 	cmdMap["srandmember"] = SRandMember
 
+	cmdMap["flushdb"] = FlushDB   // 清空数据库内容
+	cmdMap["flushall"] = FlushAll // 清空数据库内容
+
 	return cmdMap
 }

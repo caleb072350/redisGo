@@ -2,14 +2,16 @@ package db
 
 import (
 	"fmt"
-	"redisGo/datastruct/dict"
+	Dict "redisGo/datastruct/dict"
 	"redisGo/datastruct/lock"
+	"redisGo/interface/dict"
 	"redisGo/interface/redis"
 	"redisGo/lib/logger"
 	"redisGo/pubsub"
 	"redisGo/redis/reply"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,24 +19,47 @@ type DataEntity struct {
 	Data interface{}
 }
 
+const (
+	dataDictSize = 128
+	ttlDictSize  = 128
+	lockerSize   = 128
+)
+
 type CmdFunc func(db *DB, args [][]byte) redis.Reply
 
 type DB struct {
-	Data     *dict.ConcurrentDict
-	TTLMap   *dict.SimpleDict
+	Data     dict.Dict
+	TTLMap   dict.Dict
 	Locker   *lock.LockMap
 	interval time.Duration
 
 	hub *pubsub.Hub
+
+	stopWorld sync.WaitGroup // DB 的全局锁，在某些场景下单独对某个key加锁是不够的
 }
+
+/*
+ * 将sync.RWMutex替换为sync.WaitGroup 的主要好处在于性能提升，尤其是在读多写少的场景下。
+ * sync.RWMutex 允许多个读取操作并发执行，但写入操作会阻塞所有的读操作。虽然在一定程度上能够
+ * 并发的读，提高了并发性读写锁本身也有一定的开销，每次获取和释放锁都需要进行系统调用，这会带来
+ * 一定的开销 sync.WaitGroup则是一种更轻量级的同步机制，它主要用于等待一组goroutine完成执行。
+ * 在Godis的场景中，主要实现了以下优化：
+ * - 读取操作无锁：读取操作不再需要获取锁，可以直接访问Data，从而减少了锁的开销，提高了读取性能。
+ * - 写入操作更高效：写入操作只需要等待所有进行的读操作完成后执行，而不需要阻塞后续的读取操作，这
+ *   在读多写少的场景下可以显著提高吞吐量。
+ * 具体实现方式：
+ * - 在每个写操作前，调用wg.Add(1)增加计数器
+ * - 在每个写操作结束后，调用wg.Done()减少计数器
+ * - 在读操作开始前，调用wg.Wait()等待所有写操作完成
+ */
 
 var router = MakeRouter()
 
 func MakeDB() *DB {
 	db := &DB{
-		Data:     dict.MakeConcurrent(128),
-		TTLMap:   dict.MakeSimple(),
-		Locker:   lock.Make(1024),
+		Data:     Dict.MakeConcurrent(dataDictSize),
+		TTLMap:   Dict.MakeConcurrent(ttlDictSize),
+		Locker:   lock.Make(lockerSize),
 		interval: 5 * time.Second,
 		hub:      pubsub.MakeHub(),
 	}
@@ -74,25 +99,73 @@ func (db *DB) Exec(c redis.Client, args [][]byte) (result redis.Reply) {
 	return
 }
 
+/* ---- Data Access ---- */
 func (db *DB) Get(key string) (*DataEntity, bool) {
+	db.stopWorld.Wait()
+
 	raw, exists := db.Data.Get(key)
 	if !exists {
+		return nil, false
+	}
+	if db.IsExpired(key) {
 		return nil, false
 	}
 	entity, _ := raw.(*DataEntity)
 	return entity, true
 }
 
+func (db *DB) Put(key string, entity *DataEntity) int {
+	db.stopWorld.Wait()
+	return db.Data.Put(key, entity)
+}
+
+func (db *DB) PutIfExists(key string, entity *DataEntity) int {
+	db.stopWorld.Wait()
+	return db.Data.PutIfExists(key, entity)
+}
+
+func (db *DB) PutIfAbsent(key string, entity *DataEntity) int {
+	db.stopWorld.Wait()
+	return db.Data.PutIfAbsent(key, entity)
+}
+
 func (db *DB) Remove(key string) {
+	db.stopWorld.Wait()
 	db.Data.Remove(key)
 	db.TTLMap.Remove(key)
 }
 
+func (db *DB) Removes(keys ...string) int {
+	db.stopWorld.Wait()
+	deleted := 0
+	for _, key := range keys {
+		_, exists := db.Data.Get(key)
+		if exists {
+			db.Data.Remove(key)
+			db.TTLMap.Remove(key)
+			deleted++
+		}
+	}
+	return deleted
+}
+
+// 之前的stopWait.Wait()操作都是为了与Flush命令互斥访问数据
+func (db *DB) Flush() {
+	db.stopWorld.Add(1)
+	defer db.stopWorld.Done()
+
+	db.Data = Dict.MakeConcurrent(dataDictSize)
+	db.TTLMap = Dict.MakeConcurrent(ttlDictSize)
+	db.Locker = lock.Make(lockerSize)
+}
+
 func (db *DB) Expire(key string, expireTime time.Time) {
+	db.stopWorld.Wait()
 	db.TTLMap.Put(key, expireTime)
 }
 
 func (db *DB) Persist(key string) {
+	db.stopWorld.Wait()
 	db.TTLMap.Remove(key)
 }
 
