@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"io"
 	"os"
+	"redisGo/config"
 	Dict "redisGo/datastruct/dict"
 	"redisGo/datastruct/list"
 	"redisGo/datastruct/lock"
@@ -34,7 +35,9 @@ func makeAofCmd(cmd string, args [][]byte) *reply.MultiBulkReply {
 }
 
 func (db *DB) addAof(args *reply.MultiBulkReply) {
-	db.aofChan <- args
+	if config.Properties.AppendOnly && db.aofChan != nil {
+		db.aofChan <- args
+	}
 }
 
 func (db *DB) handleAof() {

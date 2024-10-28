@@ -3,6 +3,7 @@ package db
 import (
 	"fmt"
 	"os"
+	"redisGo/config"
 	Dict "redisGo/datastruct/dict"
 	"redisGo/datastruct/lock"
 	"redisGo/interface/dict"
@@ -25,7 +26,6 @@ const (
 	ttlDictSize  = 128
 	lockerSize   = 128
 	aofQueueSize = 1 << 10
-	aofFilename  = "aof.aof"
 )
 
 type CmdFunc func(db *DB, args [][]byte) redis.Reply
@@ -75,18 +75,20 @@ func MakeDB() *DB {
 		hub:      pubsub.MakeHub(),
 	}
 
-	db.aofFilename = aofFilename
-	db.loadAof()
-	aofFile, err := os.OpenFile(db.aofFilename, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		logger.Warn(err)
-	} else {
-		db.aofFile = aofFile
-		db.aofChan = make(chan *reply.MultiBulkReply, aofQueueSize)
+	if config.Properties.AppendOnly {
+		db.aofFilename = config.Properties.AppendFilename
+		db.loadAof()
+		aofFile, err := os.OpenFile(db.aofFilename, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			logger.Warn(err)
+		} else {
+			db.aofFile = aofFile
+			db.aofChan = make(chan *reply.MultiBulkReply, aofQueueSize)
+		}
+		go func() {
+			db.handleAof()
+		}()
 	}
-	go func() {
-		db.handleAof()
-	}()
 	db.TimerTask()
 	return db
 }

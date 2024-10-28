@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"redisGo/config"
 	"redisGo/lib/logger"
 	"redisGo/redis/tcp"
 	"redisGo/server"
@@ -8,6 +10,7 @@ import (
 )
 
 func main() {
+	config.SetupConfig("redis.conf")
 	settings := &logger.Settings{
 		Path:       "logs",
 		Name:       "Godis",
@@ -17,9 +20,9 @@ func main() {
 	logger.Setup(settings)
 
 	cfg := &server.Config{
-		Address:    ":6379",
-		MaxConnect: 16,
-		Timeout:    10 * time.Second,
+		Address:    fmt.Sprintf("%s:%d", config.Properties.Bind, config.Properties.Port),
+		MaxConnect: uint32(config.Properties.MaxClients),
+		Timeout:    2 * time.Second,
 	}
 	// server.ListenAndServe(cfg, &server.EchoServer{})
 	handler := tcp.MakeRedisHandler()
