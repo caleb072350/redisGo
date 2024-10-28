@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"redisGo/config"
 	"redisGo/lib/logger"
-	"redisGo/redis/tcp"
-	"redisGo/server"
+	RedisServer "redisGo/redis/server"
+	"redisGo/tcp"
 	"time"
 )
 
@@ -19,12 +19,12 @@ func main() {
 	}
 	logger.Setup(settings)
 
-	cfg := &server.Config{
+	cfg := &tcp.Config{
 		Address:    fmt.Sprintf("%s:%d", config.Properties.Bind, config.Properties.Port),
 		MaxConnect: uint32(config.Properties.MaxClients),
 		Timeout:    2 * time.Second,
 	}
 	// server.ListenAndServe(cfg, &server.EchoServer{})
-	handler := tcp.MakeRedisHandler()
-	server.ListenAndServe(cfg, handler)
+	handler := RedisServer.MakeRedisHandler()
+	tcp.ListenAndServe(cfg, handler)
 }
