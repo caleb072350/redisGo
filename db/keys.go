@@ -280,3 +280,11 @@ func RenameNX(db *DB, args [][]byte) redis.Reply {
 	db.addAof(makeAofCmd("renamenx", args))
 	return reply.MakeIntReply(1)
 }
+
+func BGRewriteAOF(db *DB, args [][]byte) redis.Reply {
+	if len(args) != 0 {
+		return reply.MakeErrReply("ERR wrong number of arguments for 'bgsave' command")
+	}
+	go db.aofRewrite()
+	return reply.MakeStatusReply("Background append only file rewrite started")
+}

@@ -44,6 +44,9 @@ type DB struct {
 	aofChan     chan *reply.MultiBulkReply
 	aofFile     *os.File
 	aofFilename string
+
+	aofRewriteChan chan *reply.MultiBulkReply
+	pausingAof     sync.RWMutex
 }
 
 /*
@@ -116,6 +119,8 @@ func (db *DB) Exec(c redis.Client, args [][]byte) (result redis.Reply) {
 		return pubsub.UnSubscribe(db.hub, c, args[1:])
 	} else if cmd == "publish" {
 		return pubsub.Publish(db.hub, args[1:])
+	} else if cmd == "bgrewriteaof" {
+		return BGRewriteAOF(db, args[1:])
 	}
 	CmdFunc, ok := router[cmd]
 	if !ok {
