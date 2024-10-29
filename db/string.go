@@ -19,7 +19,7 @@ const (
 func (db *DB) getAsString(key string) ([]byte, reply.ErrorReply) {
 	entity, ok := db.Get(key)
 	if !ok {
-		return nil, reply.MakeErrorReply("ERR key not found")
+		return nil, nil
 	}
 	bytes, ok := entity.Data.([]byte)
 	if !ok {
@@ -121,7 +121,7 @@ func Set(db *DB, args [][]byte) redis.Reply {
 	} else {
 		db.Persist(key)
 	}
-	db.addAof(makeAofCmd("set", args))
+	db.AddAof(makeAofCmd("set", args))
 	return &reply.OkReply{}
 }
 
@@ -145,7 +145,7 @@ func MSet(db *DB, args [][]byte) redis.Reply {
 		db.Put(key, entity)
 		i += 2
 	}
-	db.addAof(makeAofCmd("mset", args))
+	db.AddAof(makeAofCmd("mset", args))
 	return &reply.OkReply{}
 }
 
@@ -182,7 +182,7 @@ func GetSet(db *DB, args [][]byte) redis.Reply {
 		return errReply
 	}
 	db.PutIfExists(key, &DataEntity{Data: value})
-	db.addAof(makeAofCmd("getset", args))
+	db.AddAof(makeAofCmd("getset", args))
 	return reply.MakeBulkReply(bytes)
 }
 
@@ -205,7 +205,7 @@ func Incr(db *DB, args [][]byte) redis.Reply {
 		return reply.MakeErrReply("ERR value is not an integer or out of range")
 	}
 	db.PutIfExists(key, &DataEntity{Data: []byte(strconv.FormatInt(i+1, 10))})
-	db.addAof(makeAofCmd("incr", args))
+	db.AddAof(makeAofCmd("incr", args))
 	return reply.MakeIntReply(i + 1)
 }
 
@@ -233,7 +233,7 @@ func IncrBy(db *DB, args [][]byte) redis.Reply {
 		return reply.MakeErrReply("ERR value is not an integer or out of range")
 	}
 	db.PutIfExists(key, &DataEntity{Data: []byte(strconv.FormatInt(i+delta, 10))})
-	db.addAof(makeAofCmd("incrby", args))
+	db.AddAof(makeAofCmd("incrby", args))
 	return reply.MakeIntReply(i + delta)
 }
 
@@ -262,7 +262,7 @@ func IncrByFloat(db *DB, args [][]byte) redis.Reply {
 	}
 	resultBytes := []byte(i.Add(delta).String())
 	db.PutIfExists(key, &DataEntity{Data: resultBytes})
-	db.addAof(makeAofCmd("incrbyfloat", args))
+	db.AddAof(makeAofCmd("incrbyfloat", args))
 	return reply.MakeBulkReply(resultBytes)
 }
 
@@ -285,7 +285,7 @@ func Decr(db *DB, args [][]byte) redis.Reply {
 		return reply.MakeErrReply("ERR value is not an integer or out of range")
 	}
 	db.PutIfExists(key, &DataEntity{Data: []byte(strconv.FormatInt(i-1, 10))})
-	db.addAof(makeAofCmd("decr", args))
+	db.AddAof(makeAofCmd("decr", args))
 	return reply.MakeIntReply(i - 1)
 }
 
@@ -313,7 +313,7 @@ func DecrBy(db *DB, args [][]byte) redis.Reply {
 		return reply.MakeErrReply("ERR value is not an integer or out of range")
 	}
 	db.PutIfExists(key, &DataEntity{Data: []byte(strconv.FormatInt(i-delta, 10))})
-	db.addAof(makeAofCmd("decrby", args))
+	db.AddAof(makeAofCmd("decrby", args))
 	return reply.MakeIntReply(i - delta)
 }
 
@@ -342,6 +342,6 @@ func DecrByFloat(db *DB, args [][]byte) redis.Reply {
 	}
 	resultBytes := []byte(i.Sub(delta).String())
 	db.PutIfExists(key, &DataEntity{Data: resultBytes})
-	db.addAof(makeAofCmd("decrbyfloat", args))
+	db.AddAof(makeAofCmd("decrbyfloat", args))
 	return reply.MakeBulkReply(resultBytes)
 }

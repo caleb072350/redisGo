@@ -1,26 +1,14 @@
 package reply
 
-import "strconv"
+import (
+	"redisGo/interface/redis"
+	"strconv"
+)
 
 var (
 	nullBulkReplyBytes = []byte("$-1")
 	CRLF               = "\r\n"
 )
-
-/* ---- Error Reply ---- */
-type ErrReply struct {
-	Status string
-}
-
-func (r *ErrReply) ToBytes() []byte {
-	return []byte(("-") + r.Status + CRLF)
-}
-
-func MakeErrReply(status string) *ErrReply {
-	return &ErrReply{
-		Status: status,
-	}
-}
 
 /* ---- Bulk Reply ---- */
 type BulkReply struct {
@@ -32,6 +20,12 @@ func (r *BulkReply) ToBytes() []byte {
 		return nullBulkReplyBytes
 	}
 	return []byte("$" + strconv.Itoa(len(r.Arg)) + CRLF + string(r.Arg) + CRLF)
+}
+
+func MakeBulkReply(arg []byte) *BulkReply {
+	return &BulkReply{
+		Arg: arg,
+	}
 }
 
 /* ---- Multi Bulk Reply ---- */
@@ -58,12 +52,6 @@ func (r *MultiBulkReply) ToBytes() []byte {
 	return []byte(res)
 }
 
-func MakeBulkReply(arg []byte) *BulkReply {
-	return &BulkReply{
-		Arg: arg,
-	}
-}
-
 /* ---- Error Reply ----- */
 type ErrorReply interface {
 	Error() string
@@ -74,7 +62,7 @@ type StandardErrReply struct {
 	Status string
 }
 
-func MakeErrorReply(status string) *StandardErrReply {
+func MakeErrReply(status string) *StandardErrReply {
 	return &StandardErrReply{
 		Status: status,
 	}
@@ -86,6 +74,10 @@ func (r *StandardErrReply) ToBytes() []byte {
 
 func (r *StandardErrReply) Error() string {
 	return r.Status
+}
+
+func IsErrorReply(reply redis.Reply) bool {
+	return reply.ToBytes()[0] == '-'
 }
 
 /* ---- Int Reply ----- */

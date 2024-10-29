@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"redisGo/config"
 	"redisGo/lib/logger"
 	RedisServer "redisGo/redis/server"
@@ -10,7 +11,11 @@ import (
 )
 
 func main() {
-	config.SetupConfig("redis.conf")
+	configFilename := os.Getenv("CONFIG")
+	if configFilename == "" {
+		configFilename = "redis.conf"
+	}
+	config.SetupConfig(configFilename)
 	settings := &logger.Settings{
 		Path:       "logs",
 		Name:       "Godis",

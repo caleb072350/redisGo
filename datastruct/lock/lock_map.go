@@ -63,42 +63,54 @@ func (lockMap *LockMap) RUnlock(key string) {
 	mu.RUnlock()
 }
 
+func (lockMap *LockMap) toLockIndices(keys []string, reverse bool) []uint32 {
+	indexMap := make(map[uint32]bool)
+	for _, key := range keys {
+		index := lockMap.spread(fnv32(key))
+		indexMap[index] = true
+	}
+	indices := make([]uint32, 0, len(indexMap))
+	for index := range indexMap {
+		indices = append(indices, index)
+	}
+	sort.Slice(indices, func(i, j int) bool {
+		if !reverse {
+			return indices[i] < indices[j]
+		} else {
+			return indices[i] > indices[j]
+		}
+	})
+	return indices
+}
+
 func (lockMap *LockMap) Locks(keys ...string) {
-	keySlice := make(sort.StringSlice, len(keys))
-	copy(keySlice, keys)
-	sort.Sort(keySlice)
-	for _, key := range keySlice {
-		lockMap.Lock(key)
+	indices := lockMap.toLockIndices(keys, false)
+	for _, index := range indices {
+		mu := lockMap.table[index]
+		mu.Lock()
 	}
 }
 
 func (lockMap *LockMap) Unlocks(keys ...string) {
-	size := len(keys)
-	keySlice := make(sort.StringSlice, size)
-	copy(keySlice, keys)
-	sort.Sort(keySlice)
-	for i := size - 1; i >= 0; i-- {
-		key := keySlice[i]
-		lockMap.Unlock(key)
+	indices := lockMap.toLockIndices(keys, true)
+	for _, index := range indices {
+		mu := lockMap.table[index]
+		mu.Unlock()
 	}
 }
 
 func (lockMap *LockMap) RLocks(keys ...string) {
-	keySlice := make(sort.StringSlice, len(keys))
-	copy(keySlice, keys)
-	sort.Sort(keySlice)
-	for _, key := range keySlice {
-		lockMap.RLock(key)
+	indices := lockMap.toLockIndices(keys, false)
+	for _, index := range indices {
+		mu := lockMap.table[index]
+		mu.RLock()
 	}
 }
 
 func (lockMap *LockMap) RUnlocks(keys ...string) {
-	size := len(keys)
-	keySlice := make(sort.StringSlice, size)
-	copy(keySlice, keys)
-	sort.Sort(keySlice)
-	for i := size - 1; i >= 0; i-- {
-		key := keySlice[i]
-		lockMap.RUnlock(key)
+	indices := lockMap.toLockIndices(keys, true)
+	for _, index := range indices {
+		mu := lockMap.table[index]
+		mu.RUnlock()
 	}
 }

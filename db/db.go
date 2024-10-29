@@ -77,7 +77,7 @@ func MakeDB() *DB {
 
 	if config.Properties.AppendOnly {
 		db.aofFilename = config.Properties.AppendFilename
-		db.loadAof()
+		db.loadAof(0)
 		aofFile, err := os.OpenFile(db.aofFilename, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
 		if err != nil {
 			logger.Warn(err)
@@ -102,7 +102,7 @@ func (db *DB) Close() {
 	}
 }
 
-func (db *DB) Exec(c redis.Client, args [][]byte) (result redis.Reply) {
+func (db *DB) Exec(c redis.Connection, args [][]byte) (result redis.Reply) {
 	defer func() {
 		if err := recover(); err != nil {
 			logger.Warn(fmt.Sprintf("error occurs: %v\n%s", err, string(debug.Stack())))
@@ -209,7 +209,7 @@ func (db *DB) Persist(key string) {
 func (db *DB) IsExpired(key string) bool {
 	rawExpireTime, ok := db.TTLMap.Get(key)
 	if !ok {
-		return true
+		return false
 	}
 	expireTime, _ := rawExpireTime.(time.Time)
 	expired := expireTime.Before(time.Now())
@@ -272,6 +272,6 @@ func (db *DB) RUnlocks(keys ...string) {
 	db.Locker.RUnlocks(keys...)
 }
 
-func (db *DB) AfterClientClose(c redis.Client) {
+func (db *DB) AfterClientClose(c redis.Connection) {
 	pubsub.UnsubscribeAll(db.hub, c)
 }

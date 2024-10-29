@@ -50,7 +50,7 @@ func RPush(db *DB, args [][]byte) redis.Reply {
 	for _, value := range values {
 		list.Add(value)
 	}
-	db.addAof(makeAofCmd("rpush", args))
+	db.AddAof(makeAofCmd("rpush", args))
 	return reply.MakeIntReply(int64(list.Len()))
 
 }
@@ -120,7 +120,7 @@ func LPop(db *DB, args [][]byte) redis.Reply {
 	if list.Len() == 0 {
 		db.Data.Remove(key)
 	}
-	db.addAof(makeAofCmd("lpop", args))
+	db.AddAof(makeAofCmd("lpop", args))
 	return reply.MakeBulkReply(val)
 }
 
@@ -141,7 +141,7 @@ func LPush(db *DB, args [][]byte) redis.Reply {
 	for i := len(values) - 1; i >= 0; i-- {
 		list.Insert(0, values[i])
 	}
-	db.addAof(makeAofCmd("lpush", args))
+	db.AddAof(makeAofCmd("lpush", args))
 	return reply.MakeIntReply(int64(list.Len()))
 }
 
@@ -233,7 +233,7 @@ func LRem(db *DB, args [][]byte) redis.Reply {
 	if list.Len() == 0 {
 		db.Data.Remove(key)
 	}
-	db.addAof(makeAofCmd("lrem", args))
+	db.AddAof(makeAofCmd("lrem", args))
 	return reply.MakeIntReply(int64(removed))
 }
 
@@ -268,7 +268,7 @@ func LSet(db *DB, args [][]byte) redis.Reply {
 		return reply.MakeErrReply("ERR index out of range")
 	}
 	list.Set(index, val)
-	db.addAof(makeAofCmd("lset", args))
+	db.AddAof(makeAofCmd("lset", args))
 	return &reply.OkReply{}
 }
 
@@ -292,7 +292,7 @@ func RPop(db *DB, args [][]byte) redis.Reply {
 	if list.Len() == 0 {
 		db.Data.Remove(key)
 	}
-	db.addAof(makeAofCmd("rpop", args))
+	db.AddAof(makeAofCmd("rpop", args))
 	return reply.MakeBulkReply(val)
 }
 
@@ -325,6 +325,6 @@ func RPopLPush(db *DB, args [][]byte) redis.Reply {
 	if sourceList.Len() == 0 {
 		db.Remove(sourceKey)
 	}
-	db.addAof(makeAofCmd("rpoplpush", args))
+	db.AddAof(makeAofCmd("rpoplpush", args))
 	return reply.MakeBulkReply(val)
 }

@@ -23,7 +23,7 @@ func MakeMsg(t string, channel string, code int64) []byte {
 /*
  * invoker should lock channel
  */
-func subscribe0(hub *Hub, channel string, client redis.Client) bool {
+func subscribe0(hub *Hub, channel string, client redis.Connection) bool {
 	client.SubsChannel(channel)
 
 	// add into db.subs
@@ -42,7 +42,7 @@ func subscribe0(hub *Hub, channel string, client redis.Client) bool {
 	return true
 }
 
-func unsubscribe0(hub *Hub, channel string, client redis.Client) bool {
+func unsubscribe0(hub *Hub, channel string, client redis.Connection) bool {
 	client.UnSubsChannel(channel)
 
 	raw, ok := hub.subs.Get(channel)
@@ -57,7 +57,7 @@ func unsubscribe0(hub *Hub, channel string, client redis.Client) bool {
 	return false
 }
 
-func Subscribe(hub *Hub, c redis.Client, args [][]byte) redis.Reply {
+func Subscribe(hub *Hub, c redis.Connection, args [][]byte) redis.Reply {
 	channels := make([]string, len(args))
 	for i, b := range args {
 		channels[i] = string(b)
@@ -73,7 +73,7 @@ func Subscribe(hub *Hub, c redis.Client, args [][]byte) redis.Reply {
 	return &reply.NoReply{}
 }
 
-func UnsubscribeAll(hub *Hub, c redis.Client) {
+func UnsubscribeAll(hub *Hub, c redis.Connection) {
 	channels := c.GetChannels()
 	hub.subsLocker.Locks(channels...)
 	defer hub.subsLocker.Unlocks(channels...)
@@ -83,7 +83,7 @@ func UnsubscribeAll(hub *Hub, c redis.Client) {
 	}
 }
 
-func UnSubscribe(hub *Hub, c redis.Client, args [][]byte) redis.Reply {
+func UnSubscribe(hub *Hub, c redis.Connection, args [][]byte) redis.Reply {
 	var channels []string
 	if len(args) > 0 {
 		channels = make([]string, len(args))
@@ -125,7 +125,7 @@ func Publish(hub *Hub, args [][]byte) redis.Reply {
 	}
 	subscribers, _ := raw.(*list.LinkedList)
 	subscribers.ForEach(func(_ int, c interface{}) bool {
-		client, _ := c.(redis.Client)
+		client, _ := c.(redis.Connection)
 		replyArgs := make([][]byte, 3)
 		replyArgs[0] = messageBytes
 		replyArgs[1] = []byte(channel)

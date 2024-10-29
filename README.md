@@ -1,5 +1,44 @@
 # redis Go ~~~
 
+## Running
+
+You can get runnable program in the releases of this repository, which supports Linux and Darwin system.
+
+```bash
+./godis-darwin
+```
+
+You could use redis-cli or other redis client to connect godis server, which listens on 127.0.0.1:6379 on default mode.
+
+The program will try to read config file path from environment variable `CONFIG`.
+
+If environment variable is not set, then the program  try to read `redis.conf` in the working directory. 
+
+If there is no such file, then the program will run with default config.
+
+### cluster mode
+
+Godis can work in cluster mode, please append following lines to redis.conf file
+
+```ini
+peers localhost:7379,localhost:7389 // other node in cluster
+self  localhost:6399 // self address
+```
+
+We provide node1.conf and node2.conf for demonstration. 
+use following command line to start a two-node-cluster:
+
+```bash
+CONFIG=node1.conf ./godis-darwin &
+CONFIG=node2.conf ./godis-darwin &
+``` 
+
+The cluster is transparent to client. You can connect to any node in the cluster to access all data in the cluster:
+
+```cmd
+redis-cli -p 6399
+```
+
 ## Commands
 
 This repository implemented most of features of redis, including 5 kind of data structures, ttl, publish/subscribe and AOF persistence.

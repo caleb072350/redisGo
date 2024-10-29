@@ -15,15 +15,16 @@ func main() {
 	}
 	defer conn.Close()
 
-	// testCommand(conn, "*3\r\n$4\r\nSADD\r\n$3\r\nkey\r\n$5\r\nvalue\r\n")
+	// testCommand(conn, "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n")
 	// 测试 订阅
-	// testCommand(conn, "*2\r\n$9\r\nSUBSCRIBE\r\n$11\r\ntestchannel\r\n")
-	fmt.Fprintln(conn, "*2\r\n$9\r\nSUBSCRIBE\r\n$11\r\ntestchannel\r\n")
+	testCommand(conn, "*2\r\n$3\r\nget\r\n$3\r\nkey\r\n")
+	//fmt.Fprintln(conn, "*2\r\n$9\r\nSUBSCRIBE\r\n$11\r\ntestchannel\r\n")
 
-	go testReadChannel(conn)
+	// go testReadChannel(conn)
 
 	// 保持主goroutine 运行，否则程序会退出
-	select {}
+	// select {}
+	// testCommand(conn, "*5\r\n$5\r\nRPUSH\r\n$3\r\narr\r\n$1\r\n1\r\n$1\r\n2\r\n$1\r\n3\r\n")
 }
 
 func testCommand(conn net.Conn, command string) {

@@ -34,7 +34,7 @@ func makeAofCmd(cmd string, args [][]byte) *reply.MultiBulkReply {
 	return reply.MakeMultiBulkReply(params)
 }
 
-func (db *DB) addAof(args *reply.MultiBulkReply) {
+func (db *DB) AddAof(args *reply.MultiBulkReply) {
 	if config.Properties.AppendOnly && db.aofChan != nil {
 		db.aofChan <- args
 	}
@@ -54,7 +54,26 @@ func (db *DB) handleAof() {
 	}
 }
 
-func (db *DB) loadAof() {
+func trim(msg []byte) string {
+	trimed := ""
+	for i := len(msg) - 1; i >= 0; i-- {
+		if msg[i] == '\n' || msg[i] == '\r' {
+			continue
+		}
+		return string(msg[:i+1])
+	}
+	return trimed
+}
+
+func (db *DB) loadAof(maxBytes int) {
+	// delete aofChan to prevent write again
+	aofChan := db.aofChan
+	db.aofChan = nil
+	defer func(aofChan chan *reply.MultiBulkReply) {
+		db.aofChan = aofChan
+	}(aofChan)
+
+	// load aof
 	file, err := os.Open(db.aofFilename)
 	if err != nil {
 		logger.Error(err)
@@ -69,35 +88,41 @@ func (db *DB) loadAof() {
 	var args [][]byte
 	processing := false
 	var msg []byte
+	readBytes := 0
 	for {
+		if maxBytes != 0 && readBytes > maxBytes {
+			break
+		}
 		if fixedLen == 0 {
 			msg, err := reader.ReadBytes('\n')
 			if err == io.EOF {
 				return
 			}
-			if len(msg) < 2 || msg[len(msg)-2] != '\r' {
-				logger.Warn("invalid format: line should end with '\r\n'")
+			if len(msg) == 0 {
+				logger.Warn("invalid format: line should end with \\r\\n")
 				return
 			}
+			readBytes += len(msg)
 		} else {
 			msg := make([]byte, fixedLen+2)
-			_, err = io.ReadFull(reader, msg)
+			n, err := io.ReadFull(reader, msg)
 			if err == io.EOF {
 				return
 			}
-			if len(msg) == 0 || msg[len(msg)-1] != '\n' || msg[len(msg)-2] != '\r' {
+			if len(msg) == 0 {
 				logger.Warn("invalid multibulk length")
 				return
 			}
 			fixedLen = 0
+			readBytes += n
 		}
 		if err != nil {
 			logger.Warn(err)
 			return
 		}
-		if !processing {
+		if !processing && len(msg) >= 2 {
 			if msg[0] == '*' {
-				expectedLine, err := strconv.ParseUint(string(msg[1:len(msg)-2]), 10, 32)
+				expectedLine, err := strconv.ParseUint(trim(msg[1:]), 10, 32)
 				if err != nil {
 					logger.Warn(err)
 					return
@@ -110,10 +135,10 @@ func (db *DB) loadAof() {
 				logger.Warn("msg should start with '*'")
 				return
 			}
-		} else {
+		} else if len(msg) >= 2 {
 			line := msg[0 : len(msg)-2]
 			if line[0] == '$' {
-				fixedLen, err = strconv.ParseInt(string(line[1:]), 10, 64)
+				fixedLen, err = strconv.ParseInt(trim(line[1:]), 10, 64)
 				if err != nil {
 					logger.Warn(err)
 					return
@@ -147,7 +172,7 @@ func (db *DB) loadAof() {
 
 /* aof rewrite 主要是aof文件很大之后影响读写性能，需要重写aof文件，重写aof文件会简化中间的操作过程，仅保证最终的数据一致 */
 func (db *DB) aofRewrite() {
-	file, err := db.startRewrite()
+	file, fileSize, err := db.startRewrite()
 	if err != nil {
 		logger.Warn(err)
 		return
@@ -161,7 +186,7 @@ func (db *DB) aofRewrite() {
 		interval:    5 * time.Second,
 		aofFilename: db.aofFilename,
 	}
-	tmpDB.loadAof()
+	tmpDB.loadAof(int(fileSize))
 
 	// rewrite aof file
 	tmpDB.Data.ForEach(func(key string, raw interface{}) bool {
@@ -248,20 +273,24 @@ func persistHash(key string, hash dict.Dict) *reply.MultiBulkReply {
 	})
 	return reply.MakeMultiBulkReply(args)
 }
-func (db *DB) startRewrite() (*os.File, error) {
+func (db *DB) startRewrite() (*os.File, int64, error) {
 	db.pausingAof.Lock() // pausing aof
 	defer db.pausingAof.Unlock()
 
 	// create rewrite channel
 	db.aofRewriteChan = make(chan *reply.MultiBulkReply, aofQueueSize)
 
+	// get current aof file size
+	fileInfo, _ := os.Stat(db.aofFilename)
+	filesize := fileInfo.Size()
+
 	// create tmp file
 	file, err := os.CreateTemp("", "aof")
 	if err != nil {
 		logger.Warn("tmp file create failed")
-		return nil, err
+		return nil, 0, err
 	}
-	return file, nil
+	return file, filesize, nil
 }
 
 func (db *DB) finishRewrite(tmpFile *os.File) {
