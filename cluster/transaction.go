@@ -5,7 +5,6 @@ import (
 	"redisGo/db"
 	"redisGo/interface/redis"
 	"redisGo/lib/logger"
-	"redisGo/lib/marshal/gob"
 	"redisGo/lib/timewheel"
 	"redisGo/redis/reply"
 	"strconv"
@@ -20,8 +19,9 @@ type Transaction struct {
 	cluster *Cluster
 	conn    redis.Connection
 
-	keys    []string
-	undoLog map[string][]byte
+	keys       []string // related keys
+	lockedKeys bool
+	undoLog    map[string][][]byte // store data for undolog
 
 	status int8
 	mu     *sync.Mutex
@@ -52,25 +52,38 @@ func NewTransaction(cluster *Cluster, c redis.Connection, id string, args [][]by
 	}
 }
 
+// Reentrant
+// invoker should hold tx.mu
+func (tx *Transaction) lockKeys() {
+	if !tx.lockedKeys {
+		tx.cluster.db.Locks(tx.keys...)
+		tx.lockedKeys = true
+	}
+}
+
+func (tx *Transaction) unLockKeys() {
+	if tx.lockedKeys {
+		tx.cluster.db.Unlocks(tx.keys...)
+		tx.lockedKeys = false
+	}
+}
+
 // t should contains keys field and Id field
 func (tx *Transaction) prepare() error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	// lock keys
-	tx.cluster.db.Locks(tx.keys...)
+	tx.lockKeys()
 
 	// build undoLog
-	tx.undoLog = make(map[string][]byte)
+	tx.undoLog = make(map[string][][]byte)
 	for _, key := range tx.keys {
 		entity, ok := tx.cluster.db.Get(key)
 		if ok {
-			blob, err := gob.Marshal(entity)
-			if err != nil {
-				return err
-			}
-			tx.undoLog[key] = blob
+			blob := db.EntityToCmd(key, entity)
+			tx.undoLog[key] = blob.Args
 		} else {
-			tx.undoLog[key] = []byte{}
+			tx.undoLog[key] = nil // entity was nil, should be removed while rollback
 		}
 	}
 	tx.status = PreparedStatus
@@ -92,22 +105,19 @@ func (tx *Transaction) rollback() error {
 	if tx.status != curStatus {
 		return fmt.Errorf("tx %s status changed", tx.id)
 	}
+	if tx.status == RollbackedStatus {
+		return nil
+	}
+	tx.lockKeys()
 	for key, blob := range tx.undoLog {
 		if len(blob) > 0 {
-			entity := &db.DataEntity{}
-			err := gob.UnMarshal(blob, entity)
-			if err != nil {
-				return err
-			}
-			tx.cluster.db.Put(key, entity)
+			tx.cluster.db.Remove(key)
+			tx.cluster.db.Exec(nil, blob)
 		} else {
 			tx.cluster.db.Remove(key)
 		}
 	}
-	// a committed transaction has released locks, do not release again
-	if tx.status != CommittedStatus {
-		tx.cluster.db.Unlocks(tx.keys...)
-	}
+	tx.unLockKeys()
 	tx.status = RollbackedStatus
 	return nil
 }
@@ -148,12 +158,6 @@ func Commit(cluster *Cluster, c redis.Connection, args [][]byte) redis.Reply {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
-	//finish transaction
-	defer func() {
-		cluster.db.Unlocks(tx.keys...)
-		tx.status = CommittedStatus
-	}()
-
 	cmd := strings.ToLower(string(tx.args[0]))
 	var result redis.Reply
 	if cmd == "del" {
@@ -165,7 +169,7 @@ func Commit(cluster *Cluster, c redis.Connection, args [][]byte) redis.Reply {
 		return reply.MakeErrReply(fmt.Sprintf("err occurs when rollback: %v. origin err: %v", err2, result))
 	} else {
 		// after committed
-		cluster.db.Unlocks(tx.keys...)
+		tx.unLockKeys()
 		tx.status = CommittedStatus
 		// clean transaction
 		// do not clean immediately, in case rollback

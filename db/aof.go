@@ -1,7 +1,6 @@
 package db
 
 import (
-	"bufio"
 	"io"
 	"os"
 	"redisGo/config"
@@ -12,9 +11,12 @@ import (
 	"redisGo/interface/dict"
 	"redisGo/lib/logger"
 	"redisGo/redis/reply"
+	"redisGo/utils"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/hcl/json/parser"
 )
 
 var pExpireAtCmd = []byte("PEXPIREAT")
@@ -52,6 +54,7 @@ func (db *DB) handleAof() {
 		}
 		db.pausingAof.RUnlock()
 	}
+	db.aofFinished <- struct{}{}
 }
 
 func trim(msg []byte) string {
@@ -81,91 +84,29 @@ func (db *DB) loadAof(maxBytes int) {
 	}
 	defer file.Close()
 
-	reader := bufio.NewReader(file)
-	var fixedLen int64 = 0
-	var expectedArgsCount uint32
-	var receivedCount uint32
-	var args [][]byte
-	processing := false
-	var msg []byte
-	readBytes := 0
-	for {
-		if maxBytes != 0 && readBytes > maxBytes {
-			break
+	reader := utils.NewLimitedReader(file, maxBytes)
+	ch := parser.Parse(reader)
+	for p := range ch {
+		if p.Err != nil {
+			if p.Err == io.EOF {
+				break
+			}
+			logger.Error("parse error: " + p.Err.Error())
+			continue
 		}
-		if fixedLen == 0 {
-			msg, err := reader.ReadBytes('\n')
-			if err == io.EOF {
-				return
-			}
-			if len(msg) == 0 {
-				logger.Warn("invalid format: line should end with \\r\\n")
-				return
-			}
-			readBytes += len(msg)
-		} else {
-			msg := make([]byte, fixedLen+2)
-			n, err := io.ReadFull(reader, msg)
-			if err == io.EOF {
-				return
-			}
-			if len(msg) == 0 {
-				logger.Warn("invalid multibulk length")
-				return
-			}
-			fixedLen = 0
-			readBytes += n
+		if p.Data == nil {
+			logger.Error("empty payload")
+			continue
 		}
-		if err != nil {
-			logger.Warn(err)
-			return
+		r, ok := p.Data.(*reply.MultiBulkReply)
+		if !ok {
+			logger.Error("require multi bulk reply")
+			continue
 		}
-		if !processing && len(msg) >= 2 {
-			if msg[0] == '*' {
-				expectedLine, err := strconv.ParseUint(trim(msg[1:]), 10, 32)
-				if err != nil {
-					logger.Warn(err)
-					return
-				}
-				expectedArgsCount = uint32(expectedLine)
-				receivedCount = 0
-				processing = true
-				args = make([][]byte, expectedLine)
-			} else {
-				logger.Warn("msg should start with '*'")
-				return
-			}
-		} else if len(msg) >= 2 {
-			line := msg[0 : len(msg)-2]
-			if line[0] == '$' {
-				fixedLen, err = strconv.ParseInt(trim(line[1:]), 10, 64)
-				if err != nil {
-					logger.Warn(err)
-					return
-				}
-				if fixedLen <= 0 {
-					logger.Warn("invalid multibulk length")
-					return
-				}
-			} else {
-				args[receivedCount] = line
-				receivedCount++
-			}
-
-			// if sending finished
-			if receivedCount == expectedArgsCount {
-				processing = false
-				cmd := strings.ToLower(string(args[0]))
-				cmdFunc, ok := router[cmd]
-				if ok {
-					cmdFunc(db, args[1:])
-				}
-
-				// finish
-				expectedArgsCount = 0
-				receivedCount = 0
-				args = nil
-			}
+		cmd := strings.ToLower(string(r.Args[0]))
+		cmdFunc, ok := router[cmd]
+		if ok {
+			cmdFunc(db, r.Args[1:])
 		}
 	}
 }
@@ -192,16 +133,7 @@ func (db *DB) aofRewrite() {
 	tmpDB.Data.ForEach(func(key string, raw interface{}) bool {
 		var cmd *reply.MultiBulkReply
 		entity, _ := raw.(*DataEntity)
-		switch val := entity.Data.(type) {
-		case []byte:
-			cmd = persistString(key, val)
-		case *list.LinkedList:
-			cmd = persistList(key, val)
-		case *set.Set:
-			cmd = persistSet(key, val)
-		case dict.Dict:
-			cmd = persistHash(key, val)
-		}
+		cmd = EntityToCmd(key, entity)
 		if cmd != nil {
 			_, _ = file.Write(cmd.ToBytes())
 		}
@@ -229,7 +161,7 @@ func persistString(key string, bytes []byte) *reply.MultiBulkReply {
 	return reply.MakeMultiBulkReply(args)
 }
 
-var rPushAllCmd = []byte("RPUSHALL")
+var rPushAllCmd = []byte("RPUSH")
 
 func persistList(key string, list *list.LinkedList) *reply.MultiBulkReply {
 	args := make([][]byte, 2+list.Len())
@@ -273,9 +205,35 @@ func persistHash(key string, hash dict.Dict) *reply.MultiBulkReply {
 	})
 	return reply.MakeMultiBulkReply(args)
 }
+
+// serialize data entity to redis command
+func EntityToCmd(key string, entity *DataEntity) *reply.MultiBulkReply {
+	if entity == nil {
+		return nil
+	}
+	var cmd *reply.MultiBulkReply
+	switch val := entity.Data.(type) {
+	case []byte:
+		cmd = persistString(key, val)
+	case *list.LinkedList:
+		cmd = persistList(key, val)
+	case *set.Set:
+		cmd = persistSet(key, val)
+	case dict.Dict:
+		cmd = persistHash(key, val)
+	}
+	return cmd
+}
+
 func (db *DB) startRewrite() (*os.File, int64, error) {
 	db.pausingAof.Lock() // pausing aof
 	defer db.pausingAof.Unlock()
+
+	err := db.aofFile.Sync() // 强制写磁盘
+	if err != nil {
+		logger.Warn("fsync failed")
+		return nil, 0, err
+	}
 
 	// create rewrite channel
 	db.aofRewriteChan = make(chan *reply.MultiBulkReply, aofQueueSize)

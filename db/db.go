@@ -45,6 +45,7 @@ type DB struct {
 	aofChan     chan *reply.MultiBulkReply
 	aofFile     *os.File
 	aofFilename string
+	aofFinished chan struct{} // aof goroutine will send msg when aof finished
 
 	aofRewriteChan chan *reply.MultiBulkReply
 	pausingAof     sync.RWMutex
