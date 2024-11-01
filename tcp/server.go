@@ -9,6 +9,7 @@ import (
 	"redisGo/interface/tcp"
 	"redisGo/lib/logger"
 	"redisGo/lib/sync/atomic"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -47,6 +48,7 @@ func ListenAndServe(cfg *Config, handler tcp.Handler) {
 	defer listener.Close()
 
 	ctx, _ := context.WithCancel(context.Background())
+	var waitDone sync.WaitGroup
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -57,6 +59,12 @@ func ListenAndServe(cfg *Config, handler tcp.Handler) {
 			continue
 		}
 		logger.Info(fmt.Sprintf("accept new connection: %s", conn.RemoteAddr().String()))
-		go handler.Handle(ctx, conn)
+		waitDone.Add(1)
+		go func() {
+			defer func() {
+				waitDone.Done()
+			}()
+			handler.Handle(ctx, conn)
+		}()
 	}
 }
