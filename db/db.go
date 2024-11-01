@@ -9,6 +9,7 @@ import (
 	"redisGo/interface/dict"
 	"redisGo/interface/redis"
 	"redisGo/lib/logger"
+	"redisGo/lib/timewheel"
 	"redisGo/pubsub"
 	"redisGo/redis/reply"
 	"runtime/debug"
@@ -196,14 +197,27 @@ func (db *DB) Flush() {
 	db.Locker = lock.Make(lockerSize)
 }
 
+/* ---- TTL Functions ---- */
+func genExpireTask(key string) string {
+	return "expire:" + key
+}
+
 func (db *DB) Expire(key string, expireTime time.Time) {
 	db.stopWorld.Wait()
 	db.TTLMap.Put(key, expireTime)
+	taskKey := genExpireTask(key)
+	timewheel.At(expireTime, taskKey, func() {
+		logger.Info("expire: " + key)
+		db.TTLMap.Remove(key)
+		db.Data.Remove(key)
+	})
 }
 
 func (db *DB) Persist(key string) {
 	db.stopWorld.Wait()
 	db.TTLMap.Remove(key)
+	taskKey := genExpireTask(key)
+	timewheel.Cancel(taskKey)
 }
 
 func (db *DB) IsExpired(key string) bool {
@@ -216,26 +230,8 @@ func (db *DB) IsExpired(key string) bool {
 	return expired
 }
 
-func (db *DB) CleanExpired() {
-	now := time.Now()
-	db.TTLMap.ForEach(func(key string, value interface{}) bool {
-		expireTime, _ := value.(time.Time)
-		if expireTime.Before(now) {
-			db.Remove(key)
-			logger.Info(fmt.Sprintf("clean expired key: %s", key))
-		}
-		return true
-	})
-}
-
 func (db *DB) TimerTask() {
-	ticker := time.NewTicker(db.interval)
-	go func() {
-		for range ticker.C {
-			db.CleanExpired()
-			logger.Info("TimerTask is running...")
-		}
-	}()
+
 }
 
 /* ---- Lock Function ---------------*/
