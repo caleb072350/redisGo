@@ -137,12 +137,15 @@ func (d *ConcurrentDict) Remove(key string) int {
 func (d *ConcurrentDict) ForEach(consumer dict.Consumer) {
 	for _, shard := range d.table {
 		shard.mutex.RLock()
-		for k, v := range shard.m {
-			if !consumer(k, v) {
-				break
+		func() {
+			defer shard.mutex.RUnlock()
+			for key, val := range shard.m {
+				continues := consumer(key, val)
+				if !continues {
+					return
+				}
 			}
-		}
-		shard.mutex.RUnlock()
+		}()
 	}
 }
 
