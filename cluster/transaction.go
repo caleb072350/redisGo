@@ -1,14 +1,16 @@
 package cluster
 
 import (
-	"context"
 	"fmt"
 	"redisGo/db"
 	"redisGo/interface/redis"
+	"redisGo/lib/logger"
 	"redisGo/lib/marshal/gob"
+	"redisGo/lib/timewheel"
 	"redisGo/redis/reply"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,19 +23,22 @@ type Transaction struct {
 	keys    []string
 	undoLog map[string][]byte
 
-	lockUntil time.Time
-	ctx       context.Context
-	cancel    context.CancelFunc
-	status    int8
+	status int8
+	mu     *sync.Mutex
 }
 
 const (
-	maxLockTime   = 3 * time.Second
-	CreatedStatus = iota
+	maxLockTime       = 3 * time.Second
+	waitBeforeCleanTx = 2 * time.Second
+	CreatedStatus     = iota
 	PreparedStatus
 	CommittedStatus
 	RollbackedStatus
 )
+
+func genTaskKey(txId string) string {
+	return "tx:" + txId
+}
 
 func NewTransaction(cluster *Cluster, c redis.Connection, id string, args [][]byte, keys []string) *Transaction {
 	return &Transaction{
@@ -43,10 +48,14 @@ func NewTransaction(cluster *Cluster, c redis.Connection, id string, args [][]by
 		conn:    c,
 		keys:    keys,
 		status:  CreatedStatus,
+		mu:      new(sync.Mutex),
 	}
 }
 
+// t should contains keys field and Id field
 func (tx *Transaction) prepare() error {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 	// lock keys
 	tx.cluster.db.Locks(tx.keys...)
 
@@ -65,10 +74,24 @@ func (tx *Transaction) prepare() error {
 		}
 	}
 	tx.status = PreparedStatus
+	taskKey := genTaskKey(tx.id)
+	timewheel.Delay(maxLockTime, taskKey, func() {
+		if tx.status == PreparedStatus { // rollback transaction uncommitted until expire
+			logger.Info("abort transaction: " + tx.id)
+			_ = tx.rollback()
+		}
+	})
 	return nil
 }
 
 func (tx *Transaction) rollback() error {
+	curStatus := tx.status
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+
+	if tx.status != curStatus {
+		return fmt.Errorf("tx %s status changed", tx.id)
+	}
 	for key, blob := range tx.undoLog {
 		if len(blob) > 0 {
 			entity := &db.DataEntity{}
@@ -81,6 +104,7 @@ func (tx *Transaction) rollback() error {
 			tx.cluster.db.Remove(key)
 		}
 	}
+	// a committed transaction has released locks, do not release again
 	if tx.status != CommittedStatus {
 		tx.cluster.db.Unlocks(tx.keys...)
 	}
@@ -103,6 +127,10 @@ func Rollback(cluster *Cluster, c redis.Connection, args [][]byte) redis.Reply {
 	if err != nil {
 		return reply.MakeErrReply(err.Error())
 	}
+	// clean transaction
+	timewheel.Delay(waitBeforeCleanTx, "", func() {
+		cluster.transactions.Remove(tx.id)
+	})
 	return reply.MakeIntReply(1)
 }
 
@@ -116,6 +144,9 @@ func Commit(cluster *Cluster, c redis.Connection, args [][]byte) redis.Reply {
 		return reply.MakeIntReply(0)
 	}
 	tx, _ := raw.(*Transaction)
+
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
 
 	//finish transaction
 	defer func() {
@@ -132,6 +163,15 @@ func Commit(cluster *Cluster, c redis.Connection, args [][]byte) redis.Reply {
 		//failed
 		err2 := tx.rollback()
 		return reply.MakeErrReply(fmt.Sprintf("err occurs when rollback: %v. origin err: %v", err2, result))
+	} else {
+		// after committed
+		cluster.db.Unlocks(tx.keys...)
+		tx.status = CommittedStatus
+		// clean transaction
+		// do not clean immediately, in case rollback
+		timewheel.Delay(waitBeforeCleanTx, "", func() {
+			cluster.transactions.Remove(tx.id)
+		})
 	}
 	return result
 }
