@@ -10,13 +10,12 @@ import (
 	"redisGo/datastruct/set"
 	"redisGo/interface/dict"
 	"redisGo/lib/logger"
+	"redisGo/redis/parser"
 	"redisGo/redis/reply"
 	"redisGo/utils"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/hashicorp/hcl/json/parser"
 )
 
 var pExpireAtCmd = []byte("PEXPIREAT")
@@ -36,12 +35,14 @@ func makeAofCmd(cmd string, args [][]byte) *reply.MultiBulkReply {
 	return reply.MakeMultiBulkReply(params)
 }
 
+// AddAof send command to aof goroutine through channel
 func (db *DB) AddAof(args *reply.MultiBulkReply) {
 	if config.Properties.AppendOnly && db.aofChan != nil {
 		db.aofChan <- args
 	}
 }
 
+// handleAof listen aof channel and write to aof file
 func (db *DB) handleAof() {
 	for cmd := range db.aofChan {
 		db.pausingAof.RLock()
@@ -55,17 +56,6 @@ func (db *DB) handleAof() {
 		db.pausingAof.RUnlock()
 	}
 	db.aofFinished <- struct{}{}
-}
-
-func trim(msg []byte) string {
-	trimed := ""
-	for i := len(msg) - 1; i >= 0; i-- {
-		if msg[i] == '\n' || msg[i] == '\r' {
-			continue
-		}
-		return string(msg[:i+1])
-	}
-	return trimed
 }
 
 func (db *DB) loadAof(maxBytes int) {
@@ -121,16 +111,16 @@ func (db *DB) aofRewrite() {
 
 	// load aof file
 	tmpDB := &DB{
-		Data:        Dict.MakeConcurrent(dataDictSize),
-		TTLMap:      Dict.MakeConcurrent(ttlDictSize),
-		Locker:      lock.Make(lockerSize),
+		data:        Dict.MakeConcurrent(dataDictSize),
+		ttlMap:      Dict.MakeConcurrent(ttlDictSize),
+		locker:      lock.Make(lockerSize),
 		interval:    5 * time.Second,
 		aofFilename: db.aofFilename,
 	}
 	tmpDB.loadAof(int(fileSize))
 
 	// rewrite aof file
-	tmpDB.Data.ForEach(func(key string, raw interface{}) bool {
+	tmpDB.data.ForEach(func(key string, raw interface{}) bool {
 		var cmd *reply.MultiBulkReply
 		entity, _ := raw.(*DataEntity)
 		cmd = EntityToCmd(key, entity)
@@ -140,7 +130,7 @@ func (db *DB) aofRewrite() {
 		return true
 	})
 
-	tmpDB.TTLMap.ForEach(func(key string, raw interface{}) bool {
+	tmpDB.ttlMap.ForEach(func(key string, raw interface{}) bool {
 		expireTime, _ := raw.(time.Time)
 		cmd := makeExpireCmd(key, expireTime)
 		if cmd != nil {

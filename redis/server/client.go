@@ -2,7 +2,6 @@ package server
 
 import (
 	"net"
-	"redisGo/lib/sync/atomic"
 	"redisGo/lib/sync/wait"
 	"sync"
 	"time"
@@ -13,18 +12,6 @@ type Client struct {
 
 	// 带超时的wait
 	waitingReply wait.Wait
-
-	// 是否在发送请求过程中
-	uploading atomic.AtomicBool
-
-	// bulk msg lineCount - 1
-	expectedArgsCount uint32
-
-	// sent line count, exclude first line
-	receivedCount uint32
-
-	// sent lines, exclude first line
-	args [][]byte
 
 	// lock while server sending response
 	mu sync.Mutex

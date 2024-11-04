@@ -118,7 +118,7 @@ func LPop(db *DB, args [][]byte) redis.Reply {
 	}
 	val, _ := list.Remove(0).([]byte)
 	if list.Len() == 0 {
-		db.Data.Remove(key)
+		db.data.Remove(key)
 	}
 	db.AddAof(makeAofCmd("lpop", args))
 	return reply.MakeBulkReply(val)
@@ -231,7 +231,7 @@ func LRem(db *DB, args [][]byte) redis.Reply {
 		removed = list.ReverseRemoveByVal(val, -count)
 	}
 	if list.Len() == 0 {
-		db.Data.Remove(key)
+		db.data.Remove(key)
 	}
 	db.AddAof(makeAofCmd("lrem", args))
 	return reply.MakeIntReply(int64(removed))
@@ -290,7 +290,7 @@ func RPop(db *DB, args [][]byte) redis.Reply {
 	}
 	val, _ := list.RemoveLast().([]byte)
 	if list.Len() == 0 {
-		db.Data.Remove(key)
+		db.data.Remove(key)
 	}
 	db.AddAof(makeAofCmd("rpop", args))
 	return reply.MakeBulkReply(val)

@@ -1,31 +1,25 @@
 package client
 
 import (
-	"bufio"
-	"context"
-	"errors"
-	"io"
 	"net"
 	"redisGo/interface/redis"
 	"redisGo/lib/logger"
 	"redisGo/lib/sync/wait"
+	"redisGo/redis/parser"
 	"redisGo/redis/reply"
-	"strconv"
-	"strings"
+	"runtime/debug"
 	"sync"
 	"time"
 )
 
 type Client struct {
 	conn        net.Conn
-	sendingReqs chan *Request
-	waitingReqs chan *Request
+	pendingReqs chan *Request // wait to send
+	waitingReqs chan *Request // waiting response
 	ticker      *time.Ticker
 	addr        string
 
-	ctx        context.Context
-	cancelFunc context.CancelFunc
-	writing    *sync.WaitGroup
+	working *sync.WaitGroup // its counter presents unfinished requests(pending and waiting)
 }
 
 type Request struct {
@@ -46,15 +40,12 @@ func MakeClient(addr string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	return &Client{
 		conn:        conn,
 		addr:        addr,
-		sendingReqs: make(chan *Request, chanSize),
+		pendingReqs: make(chan *Request, chanSize),
 		waitingReqs: make(chan *Request, chanSize),
-		ctx:         ctx,
-		cancelFunc:  cancel,
-		writing:     &sync.WaitGroup{},
+		working:     &sync.WaitGroup{},
 	}, nil
 }
 
@@ -63,15 +54,17 @@ func (client *Client) Start() {
 	go client.handleWrite()
 	go func() {
 		err := client.handleRead()
-		logger.Info(err)
+		if err != nil {
+			logger.Error(err)
+		}
 	}()
 	go client.heartbeat()
 }
 
 func (client *Client) Close() {
-	close(client.sendingReqs)
-	client.writing.Wait()
-	client.cancelFunc()
+	client.ticker.Stop()
+	close(client.pendingReqs)
+	client.working.Wait()
 	_ = client.conn.Close()
 	close(client.waitingReqs)
 }
@@ -83,7 +76,8 @@ func (client *Client) Send(args [][]byte) redis.Reply {
 		waiting:   &wait.Wait{},
 	}
 	request.waiting.Add(1)
-	client.sendingReqs <- request
+	client.working.Add(1)
+	client.pendingReqs <- request
 	timeout := request.waiting.WaitWithTimeout(maxWait)
 	if timeout {
 		return reply.MakeErrReply("server time out")
@@ -95,30 +89,27 @@ func (client *Client) Send(args [][]byte) redis.Reply {
 }
 
 func (client *Client) heartbeat() {
-loop:
-	for {
-		select {
-		case <-client.ticker.C:
-			client.sendingReqs <- &Request{
-				args:      [][]byte{[]byte("PING")},
-				heartbeat: true,
-			}
-		case <-client.ctx.Done():
-			break loop
-		}
+	for range client.ticker.C {
+		client.doHeartbeat()
 	}
 }
 
+func (client *Client) doHeartbeat() {
+	request := &Request{
+		args:      [][]byte{[]byte("PING")},
+		heartbeat: true,
+		waiting:   &wait.Wait{},
+	}
+	request.waiting.Add(1)
+	client.working.Add(1)
+	defer client.working.Done()
+	client.pendingReqs <- request
+	request.waiting.WaitWithTimeout(maxWait)
+}
+
 func (client *Client) handleWrite() {
-loop:
-	for {
-		select {
-		case req := <-client.sendingReqs:
-			client.writing.Add(1)
-			client.sendRequest(req)
-		case <-client.ctx.Done():
-			break loop
-		}
+	for req := range client.pendingReqs {
+		client.sendRequest(req)
 	}
 }
 
@@ -146,6 +137,9 @@ func (client *Client) handleConnectionError(_ error) error {
 }
 
 func (client *Client) sendRequest(req *Request) {
+	if req == nil || len(req.args) == 0 {
+		return
+	}
 	bytes := reply.MakeMultiBulkReply(req.args).ToBytes()
 	_, err := client.conn.Write(bytes)
 	i := 0
@@ -161,12 +155,20 @@ func (client *Client) sendRequest(req *Request) {
 	} else {
 		req.err = err
 		req.waiting.Done()
-		client.writing.Done()
 	}
 }
 
 func (client *Client) finishRequest(reply redis.Reply) {
+	defer func() {
+		if err := recover(); err != nil {
+			debug.PrintStack()
+			logger.Error(err)
+		}
+	}()
 	request := <-client.waitingReqs
+	if request == nil {
+		return
+	}
 	request.reply = reply
 	if request.waiting != nil {
 		request.waiting.Done()
@@ -174,134 +176,13 @@ func (client *Client) finishRequest(reply redis.Reply) {
 }
 
 func (client *Client) handleRead() error {
-	reader := bufio.NewReader(client.conn)
-	downloading := false
-	expectedArgsCount := 0
-	receivedCount := 0
-	msgType := byte(0)
-	var args [][]byte
-	var fixedLen int64 = 0
-	var err error
-	var msg []byte
-	for {
-		if fixedLen == 0 { // read normal line
-			msg, err = reader.ReadBytes('\n')
-			if err != nil {
-				if err == io.EOF || err == io.ErrUnexpectedEOF {
-					logger.Info("connection close")
-				} else {
-					logger.Warn(err)
-				}
-				return errors.New("connection error")
-			}
-			if len(msg) == 0 || msg[len(msg)-2] != '\r' {
-				return errors.New("protocol error: " + string(msg))
-			}
-		} else { // read bulk line (binary safe)
-			msg = make([]byte, fixedLen+2)
-			_, err = io.ReadFull(reader, msg)
-			if err != nil {
-				if err == io.EOF || err == io.ErrUnexpectedEOF {
-					return errors.New("connection close")
-				} else {
-					return err
-				}
-			}
-			if len(msg) == 0 || msg[len(msg)-2] != '\r' || msg[len(msg)-1] != '\n' {
-				return errors.New("protocol error: " + string(msg))
-			}
-			fixedLen = 0
+	ch := parser.Parse(client.conn)
+	for payload := range ch {
+		if payload.Err != nil {
+			client.finishRequest(reply.MakeErrReply(payload.Err.Error()))
+			continue
 		}
-
-		// parse line
-		if !downloading {
-			// receive new response
-			if msg[0] == '*' { // multibulk response
-				expectedLine, err := strconv.ParseUint(string(msg[1:len(msg)-2]), 10, 32)
-				if err != nil {
-					return errors.New("protocol error: " + string(msg))
-				}
-				if expectedLine == 0 {
-					client.finishRequest(&reply.EmptyMultiBulkReply{})
-				} else if expectedLine > 0 {
-					msgType = msg[0]
-					downloading = true
-					expectedArgsCount = int(expectedLine)
-					receivedCount = 0
-					args = make([][]byte, expectedLine)
-				} else {
-					return errors.New("protocol error: " + string(msg))
-				}
-			} else if msg[0] == '$' { // bulk response
-				fixedLen, err = strconv.ParseInt(string(msg[1:len(msg)-2]), 10, 64)
-				if err != nil {
-					return err
-				}
-				if fixedLen == -1 {
-					client.finishRequest(&reply.NullBulkReply{})
-					fixedLen = 0
-				} else if fixedLen > 0 {
-					msgType = msg[0]
-					downloading = true
-					args = make([][]byte, 1)
-					expectedArgsCount = 1
-					receivedCount = 0
-				} else {
-					return errors.New("protocol error: " + string(msg))
-				}
-			} else { // single line response
-				str := strings.TrimSuffix(string(msg), "\n")
-				str = strings.TrimSuffix(str, "\r")
-				var result redis.Reply
-				switch msg[0] {
-				case '+':
-					result = reply.MakeStatusReply(str[1:])
-				case '-':
-					result = reply.MakeErrReply(str[1:])
-				case ':':
-					val, err := strconv.ParseInt(str[1:], 10, 64)
-					if err != nil {
-						return errors.New("protocol error: " + string(msg))
-					}
-					result = reply.MakeIntReply(val)
-				}
-				client.finishRequest(result)
-				fixedLen = 0
-			}
-		} else { // reveiving args
-			line := msg[0 : len(msg)-2]
-			if line[0] == '$' {
-				fixedLen, err = strconv.ParseInt(string(line[1:]), 10, 64)
-				if err != nil {
-					return errors.New("protocol error: " + string(msg))
-				}
-				if fixedLen <= 0 {
-					args[receivedCount] = []byte{}
-					receivedCount++
-					fixedLen = 0
-				}
-			} else {
-				args[receivedCount] = line
-				receivedCount++
-			}
-
-			// if sending finished
-			if receivedCount == expectedArgsCount {
-				downloading = false
-
-				if msgType == '*' {
-					reply := reply.MakeMultiBulkReply(args)
-					client.finishRequest(reply)
-				} else if msgType == '$' {
-					reply := reply.MakeBulkReply(args[0])
-					client.finishRequest(reply)
-				}
-				// finish reply
-				expectedArgsCount = 0
-				receivedCount = 0
-				args = nil
-				msgType = byte(0)
-			}
-		}
+		client.finishRequest(payload.Data)
 	}
+	return nil
 }

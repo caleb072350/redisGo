@@ -29,12 +29,12 @@ const (
 	aofQueueSize = 1 << 10
 )
 
-type CmdFunc func(db *DB, args [][]byte) redis.Reply
+type cmdFunc func(db *DB, args [][]byte) redis.Reply
 
 type DB struct {
-	Data     dict.Dict
-	TTLMap   dict.Dict
-	Locker   *lock.LockMap
+	data     dict.Dict
+	ttlMap   dict.Dict
+	locker   *lock.LockMap
 	interval time.Duration
 
 	hub *pubsub.Hub
@@ -66,13 +66,13 @@ type DB struct {
  * - 在读操作开始前，调用wg.Wait()等待所有写操作完成
  */
 
-var router = MakeRouter()
+var router = makeRouter()
 
 func MakeDB() *DB {
 	db := &DB{
-		Data:     Dict.MakeConcurrent(dataDictSize),
-		TTLMap:   Dict.MakeConcurrent(ttlDictSize),
-		Locker:   lock.Make(lockerSize),
+		data:     Dict.MakeConcurrent(dataDictSize),
+		ttlMap:   Dict.MakeConcurrent(ttlDictSize),
+		locker:   lock.Make(lockerSize),
 		interval: 5 * time.Second,
 		hub:      pubsub.MakeHub(),
 	}
@@ -91,7 +91,6 @@ func MakeDB() *DB {
 			db.handleAof()
 		}()
 	}
-	db.TimerTask()
 	return db
 }
 
@@ -126,14 +125,14 @@ func (db *DB) Exec(c redis.Connection, args [][]byte) (result redis.Reply) {
 	} else if cmd == "bgrewriteaof" {
 		return BGRewriteAOF(db, args[1:])
 	}
-	CmdFunc, ok := router[cmd]
+	cmdFunc, ok := router[cmd]
 	if !ok {
 		return reply.MakeErrReply("ERR unknown command `" + cmd + "`")
 	}
 	if len(args) > 1 {
-		result = CmdFunc(db, args[1:])
+		result = cmdFunc(db, args[1:])
 	} else {
-		result = CmdFunc(db, [][]byte{})
+		result = cmdFunc(db, [][]byte{})
 	}
 	return
 }
@@ -142,7 +141,7 @@ func (db *DB) Exec(c redis.Connection, args [][]byte) (result redis.Reply) {
 func (db *DB) Get(key string) (*DataEntity, bool) {
 	db.stopWorld.Wait()
 
-	raw, exists := db.Data.Get(key)
+	raw, exists := db.data.Get(key)
 	if !exists {
 		return nil, false
 	}
@@ -155,33 +154,33 @@ func (db *DB) Get(key string) (*DataEntity, bool) {
 
 func (db *DB) Put(key string, entity *DataEntity) int {
 	db.stopWorld.Wait()
-	return db.Data.Put(key, entity)
+	return db.data.Put(key, entity)
 }
 
 func (db *DB) PutIfExists(key string, entity *DataEntity) int {
 	db.stopWorld.Wait()
-	return db.Data.PutIfExists(key, entity)
+	return db.data.PutIfExists(key, entity)
 }
 
 func (db *DB) PutIfAbsent(key string, entity *DataEntity) int {
 	db.stopWorld.Wait()
-	return db.Data.PutIfAbsent(key, entity)
+	return db.data.PutIfAbsent(key, entity)
 }
 
 func (db *DB) Remove(key string) {
 	db.stopWorld.Wait()
-	db.Data.Remove(key)
-	db.TTLMap.Remove(key)
+	db.data.Remove(key)
+	db.ttlMap.Remove(key)
 }
 
 func (db *DB) Removes(keys ...string) int {
 	db.stopWorld.Wait()
 	deleted := 0
 	for _, key := range keys {
-		_, exists := db.Data.Get(key)
+		_, exists := db.data.Get(key)
 		if exists {
-			db.Data.Remove(key)
-			db.TTLMap.Remove(key)
+			db.data.Remove(key)
+			db.ttlMap.Remove(key)
 			deleted++
 		}
 	}
@@ -193,9 +192,9 @@ func (db *DB) Flush() {
 	db.stopWorld.Add(1)
 	defer db.stopWorld.Done()
 
-	db.Data = Dict.MakeConcurrent(dataDictSize)
-	db.TTLMap = Dict.MakeConcurrent(ttlDictSize)
-	db.Locker = lock.Make(lockerSize)
+	db.data = Dict.MakeConcurrent(dataDictSize)
+	db.ttlMap = Dict.MakeConcurrent(ttlDictSize)
+	db.locker = lock.Make(lockerSize)
 }
 
 /* ---- TTL Functions ---- */
@@ -205,24 +204,24 @@ func genExpireTask(key string) string {
 
 func (db *DB) Expire(key string, expireTime time.Time) {
 	db.stopWorld.Wait()
-	db.TTLMap.Put(key, expireTime)
+	db.ttlMap.Put(key, expireTime)
 	taskKey := genExpireTask(key)
 	timewheel.At(expireTime, taskKey, func() {
 		logger.Info("expire: " + key)
-		db.TTLMap.Remove(key)
-		db.Data.Remove(key)
+		db.ttlMap.Remove(key)
+		db.data.Remove(key)
 	})
 }
 
 func (db *DB) Persist(key string) {
 	db.stopWorld.Wait()
-	db.TTLMap.Remove(key)
+	db.ttlMap.Remove(key)
 	taskKey := genExpireTask(key)
 	timewheel.Cancel(taskKey)
 }
 
 func (db *DB) IsExpired(key string) bool {
-	rawExpireTime, ok := db.TTLMap.Get(key)
+	rawExpireTime, ok := db.ttlMap.Get(key)
 	if !ok {
 		return false
 	}
@@ -238,35 +237,35 @@ func (db *DB) TimerTask() {
 /* ---- Lock Function ---------------*/
 
 func (db *DB) Lock(key string) {
-	db.Locker.Lock(key)
+	db.locker.Lock(key)
 }
 
 func (db *DB) RLock(key string) {
-	db.Locker.RLock(key)
+	db.locker.RLock(key)
 }
 
 func (db *DB) Unlock(key string) {
-	db.Locker.Unlock(key)
+	db.locker.Unlock(key)
 }
 
 func (db *DB) RUnlock(key string) {
-	db.Locker.RUnlock(key)
+	db.locker.RUnlock(key)
 }
 
 func (db *DB) Locks(keys ...string) {
-	db.Locker.Locks(keys...)
+	db.locker.Locks(keys...)
 }
 
 func (db *DB) RLocks(keys ...string) {
-	db.Locker.RLocks(keys...)
+	db.locker.RLocks(keys...)
 }
 
 func (db *DB) Unlocks(keys ...string) {
-	db.Locker.Unlocks(keys...)
+	db.locker.Unlocks(keys...)
 }
 
 func (db *DB) RUnlocks(keys ...string) {
-	db.Locker.RUnlocks(keys...)
+	db.locker.RUnlocks(keys...)
 }
 
 func (db *DB) AfterClientClose(c redis.Connection) {

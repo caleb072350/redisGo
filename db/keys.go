@@ -185,7 +185,7 @@ func TTL(db *DB, args [][]byte) redis.Reply {
 	if !exists {
 		return reply.MakeIntReply(-2)
 	}
-	raw, exists := db.TTLMap.Get(key)
+	raw, exists := db.ttlMap.Get(key)
 	if !exists {
 		return reply.MakeIntReply(-1)
 	}
@@ -204,7 +204,7 @@ func PTTL(db *DB, args [][]byte) redis.Reply {
 	if !exists {
 		return reply.MakeIntReply(-2)
 	}
-	raw, exists := db.TTLMap.Get(key)
+	raw, exists := db.ttlMap.Get(key)
 	if !exists {
 		return reply.MakeIntReply(-1)
 	}
@@ -222,7 +222,7 @@ func Persist(db *DB, args [][]byte) redis.Reply {
 	if !exists {
 		return reply.MakeIntReply(0)
 	}
-	_, exists = db.TTLMap.Get(key)
+	_, exists = db.ttlMap.Get(key)
 	if !exists {
 		return reply.MakeIntReply(0)
 	}
@@ -243,7 +243,7 @@ func Rename(db *DB, args [][]byte) redis.Reply {
 	if !exists {
 		return reply.MakeErrReply("ERR no such key")
 	}
-	rawTTL, ok := db.TTLMap.Get(oldKey)
+	rawTTL, ok := db.ttlMap.Get(oldKey)
 	db.Persist(oldKey)
 	db.Persist(newKey)
 	db.Put(newKey, entity)
@@ -273,7 +273,7 @@ func RenameNX(db *DB, args [][]byte) redis.Reply {
 	db.Persist(oldKey)
 	db.Persist(newKey)
 	db.Put(newKey, entity)
-	rawTTL, ok := db.TTLMap.Get(oldKey)
+	rawTTL, ok := db.ttlMap.Get(oldKey)
 	if ok {
 		db.Expire(newKey, rawTTL.(time.Time))
 	}
