@@ -29,6 +29,7 @@ func (s *EchoServer) Handle(ctx context.Context, conn net.Conn) {
 	if s.closing.Get() {
 		// closing handler refuse new connection
 		conn.Close()
+		return
 	}
 	client := &Client{
 		Conn: conn,

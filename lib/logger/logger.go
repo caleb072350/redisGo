@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"redisGo/lib/files"
 	"runtime"
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,7 @@ var (
 	DefaultPrefix      = ""
 	DefaultCallerDepth = 2
 	logger             *log.Logger
+	mu                 sync.Mutex
 	logPrefix          = ""
 	levelFlags         = []string{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"}
 )
@@ -67,26 +69,36 @@ func setPrefix(level Level) {
 }
 
 func Debug(v ...interface{}) {
+	mu.Lock()
+	defer mu.Unlock()
 	setPrefix(DEBUG)
 	logger.Println(v...)
 }
 
 func Info(v ...interface{}) {
+	mu.Lock()
+	defer mu.Unlock()
 	setPrefix(INFO)
 	logger.Println(v...)
 }
 
 func Warn(v ...interface{}) {
+	mu.Lock()
+	defer mu.Unlock()
 	setPrefix(WARNING)
 	logger.Println(v...)
 }
 
 func Error(v ...interface{}) {
+	mu.Lock()
+	defer mu.Unlock()
 	setPrefix(ERROR)
 	logger.Println(v...)
 }
 
 func Fatal(v ...interface{}) {
+	mu.Lock()
+	defer mu.Unlock()
 	setPrefix(FATAL)
 	logger.Fatalln(v...)
 }

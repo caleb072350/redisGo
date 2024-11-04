@@ -42,7 +42,9 @@ func (s *RedisHandler) closeClient(client *Client) {
 func (h *RedisHandler) Handle(ctx context.Context, conn net.Conn) {
 	if h.closing.Get() {
 		_ = conn.Close()
+		return
 	}
+
 	client := MakeClient(conn)
 	h.activeConn.Store(client, 1)
 

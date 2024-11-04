@@ -22,7 +22,7 @@ func (w *Wait) Wait() {
 }
 
 func (w *Wait) WaitWithTimeout(timeout time.Duration) bool {
-	c := make(chan bool)
+	c := make(chan bool, 1)
 	go func() {
 		defer close(c)
 		w.wg.Wait()
